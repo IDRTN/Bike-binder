@@ -1,0 +1,60 @@
+{
+  "expo": {
+    "name": "BikeBinder",
+    "slug": "bike-binder",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#e74c3c"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.bikebinder.app",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Allow BikeBinder to access your photos to attach images to parts, manuals, services, and motorcycle profiles.",
+        "NSCameraUsageDescription": "Allow BikeBinder to use your camera to take photos of parts, manuals, and service records.",
+        "NSPhotoLibraryAddUsageDescription": "Allow BikeBinder to save photos to your library.",
+        "NSLocationWhenInUseUsageDescription": "Allow BikeBinder to access your location for directions and map features."
+      }
+    },
+    "android": {
+      "package": "com.bikebinder.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#e74c3c",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-image-picker"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "0959f9b0-4e28-42c4-8494-2bf161e58253"
+      }
+    },
+    "owner": "idrtn",
+    "updates": {
+      "url": "https://u.expo.dev/0959f9b0-4e28-42c4-8494-2bf161e58253"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    }
+  }
+}
