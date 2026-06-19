@@ -42,7 +42,9 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-image-picker"
+      "expo-image-picker",
+      "expo-sharing",
+      "expo-web-browser"
     ],
     "extra": {
       "eas": {

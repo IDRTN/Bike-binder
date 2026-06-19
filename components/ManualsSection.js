@@ -8,12 +8,14 @@ import {
   FlatList,
   Image,
   Alert,
-} from 'react-native';
+, Linking } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { updateMotorcycle } from '../storage';
 import ImageViewer from './ImageViewer';
 import { COLORS } from '../theme';
+import * as Sharing from 'expo-sharing';
+import * as FileSystem from 'expo-file-system';
 
 export default function ManualsSection({ motorcycle, onUpdate }) {
   const [showForm, setShowForm] = useState(false);
@@ -115,28 +117,64 @@ export default function ManualsSection({ motorcycle, onUpdate }) {
     ? manuals.filter((m) => m.title.toLowerCase().includes(search.toLowerCase()) || (m.fileName && m.fileName.toLowerCase().includes(search.toLowerCase())))
     : manuals;
 
+  const openFile = async (item) => {
+    const isImage = item.fileUri?.match(/\.(png|jpg|jpeg|gif|webp)$/i);
+    if (isImage) {
+      openViewer(item.fileUri);
+      return;
+    }
+    // Try to open PDF with sharing (external viewer)
+    try {
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        // Copy to a cache location if needed (URIs from document picker work directly)
+        await Sharing.shareAsync(item.fileUri, {
+          mimeType: 'application/pdf',
+          dialogTitle: item.title,
+        });
+      } else {
+        // Fallback: try to open with WebBrowser
+        Linking.openURL(item.fileUri).catch(() => {
+          Alert.alert('Cannot Open', 'No PDF viewer available on this device.');
+        });
+      }
+    } catch (e) {
+      Alert.alert('Cannot Open', 'Unable to open this file.');
+    }
+  };
+
   const renderManual = ({ item }) => {
     const isImage = item.fileUri?.match(/\.(png|jpg|jpeg|gif|webp)$/i);
     return (
-      <TouchableOpacity style={styles.item} onPress={() => openEdit(item)} onLongPress={() => removeManual(item.id)}>
-        <View style={styles.itemRow}>
-          {isImage ? (
-            <TouchableOpacity onPress={() => openViewer(item.fileUri)}>
-              <Image source={{ uri: item.fileUri }} style={styles.thumb} />
-            </TouchableOpacity>
-          ) : (
-            <View style={styles.fileIcon}><Text style={styles.fileIconText}>📄</Text></View>
-          )}
-          <View style={styles.itemInfo}>
-            <Text style={styles.itemTitle}>{item.title}</Text>
-            <Text style={styles.itemSub}>{item.fileName}</Text>
-            {(item.chapter || item.section || item.page) && (
-              <Text style={styles.refText}>{item.chapter ? `Ch. ${item.chapter}` : ''}{item.section ? `  Sec. ${item.section}` : ''}{item.page ? `  Pg. ${item.page}` : ''}</Text>
+      <View style={styles.item}>
+        <TouchableOpacity onPress={() => openEdit(item)} onLongPress={() => removeManual(item.id)}>
+          <View style={styles.itemRow}>
+            {isImage ? (
+              <TouchableOpacity onPress={() => openViewer(item.fileUri)}>
+                <Image source={{ uri: item.fileUri }} style={styles.thumb} />
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity onPress={() => openFile(item)}>
+                <View style={styles.fileIcon}><Text style={styles.fileIconText}>📄</Text></View>
+              </TouchableOpacity>
             )}
+            <View style={styles.itemInfo}>
+              <Text style={styles.itemTitle}>{item.title}</Text>
+              <Text style={styles.itemSub}>{item.fileName}</Text>
+              {(item.chapter || item.section || item.page) && (
+                <Text style={styles.refText}>{item.chapter ? `Ch. ${item.chapter}` : ''}{item.section ? `  Sec. ${item.section}` : ''}{item.page ? `  Pg. ${item.page}` : ''}</Text>
+              )}
+            </View>
+            <Text style={styles.editIcon}>✎</Text>
           </View>
-          <Text style={styles.editIcon}>✎</Text>
-        </View>
-      </TouchableOpacity>
+        </TouchableOpacity>
+        {/* View button for PDF files */}
+        {!isImage && (
+          <TouchableOpacity style={styles.viewBtn} onPress={() => openFile(item)}>
+            <Text style={styles.viewBtnText}>Open PDF</Text>
+          </TouchableOpacity>
+        )}
+      </View>
     );
   };
 

@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { loadMotorcycles, updateMotorcycle } from '../storage';
 import { COLORS } from '../theme';
 import { loadPendingRides, clearPendingRide } from '../utils/rideTracker';
+import { checkForUpdate, promptUpdate } from '../utils/updateChecker';
 
 const STATIC_MILEAGE = 50000; // fallback if no mileage data
 
@@ -50,6 +51,11 @@ export default function HomeScreen({ navigation }) {
         if (unlogged.length > 0) {
           setPendingRides(unlogged);
           setShowRidePrompt(true);
+        }
+        // Check for app updates
+        const update = await checkForUpdate();
+        if (update) {
+          promptUpdate(update);
         }
       })();
     }, [])
