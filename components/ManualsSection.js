@@ -8,7 +8,8 @@ import {
   FlatList,
   Image,
   Alert,
-, Linking } from 'react-native';
+  Linking,
+} from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { updateMotorcycle } from '../storage';
