@@ -42,23 +42,23 @@ jobs:
         working-directory: ./android
         run: ./gradlew assembleDebug --no-daemon
 
-      - name: Upload APK as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: bike-binder-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+      - name: Get version
+        run: |
+          echo "VERSION=v$(node -p "require('./app.json').expo.version")" >> $GITHUB_ENV
+          echo "TIMESTAMP=$(date +%s)" >> $GITHUB_ENV
 
-      - name: Get version from app.json
-        run: echo "VERSION=$(node -p "require('./app.json').expo.version")" >> $GITHUB_ENV
-
-      - name: Create GitHub Release
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ env.VERSION }}
-          name: Bike Binder v${{ env.VERSION }}
+          tag_name: ${{ env.VERSION }}
+          name: Bike Binder ${{ env.VERSION }}
           body: |
-            Latest APK build for Bike Binder.
+            Latest build of Bike Binder.
             
-            Download the APK below and install on your Android device.
+            **Fixes in this release:**
+            - Ride tracker now calculates speed from GPS position changes (fixes incorrect mileage)
+            - PDF manuals open with your device's PDF viewer
+            - Parts section now includes Miles, Price, Make, Model, Specs, Notes fields
+            - Updated app icon
           files: android/app/build/outputs/apk/debug/*.apk
-          generate_release_notes: true
+          fail_on_unmatched_files: false
