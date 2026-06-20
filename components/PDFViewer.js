@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Modal,
   View,
@@ -6,108 +6,77 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
+  Linking,
+  Alert,
 } from 'react-native';
-import { WebView } from 'react-native-webview';
 import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { COLORS } from '../theme';
 
 export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
-  const [base64Data, setBase64Data] = React.useState(null);
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
 
   React.useEffect(() => {
     if (visible && fileUri) {
-      loadPDF();
+      openPDF();
     }
   }, [visible, fileUri]);
 
-  const loadPDF = async () => {
+  const openPDF = async () => {
     try {
       setLoading(true);
       setError(false);
 
-      // Check if it's already a web URL
+      // If it's a web URL, open directly
       if (fileUri.startsWith('http://') || fileUri.startsWith('https://')) {
-        setBase64Data(fileUri);
+        const supported = await Linking.canOpenURL(fileUri);
+        if (supported) {
+          await Linking.openURL(fileUri);
+        } else {
+          setError(true);
+        }
         setLoading(false);
         return;
       }
 
-      // Read local file as base64
-      const base64 = await FileSystem.readAsStringAsync(fileUri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      setBase64Data(`data:application/pdf;base64,${base64}`);
+      // For local files, copy to a permanent cache location and share/open
+      const cacheDir = FileSystem.cacheDirectory + 'pdfs/';
+      await FileSystem.makeDirectoryAsync(cacheDir, { intermediates: true });
+      const dest = cacheDir + (fileName || 'manual.pdf');
+
+      // Copy file to cache
+      await FileSystem.copyAsync({ from: fileUri, to: dest });
+
+      // Try sharing/open with system PDF viewer
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(dest, {
+          mimeType: 'application/pdf',
+          dialogTitle: fileName || 'Manual',
+        });
+      } else {
+        // Fallback: try to open directly
+        const supported = await Linking.canOpenURL(dest);
+        if (supported) {
+          await Linking.openURL(dest);
+        } else {
+          setError(true);
+        }
+      }
+
       setLoading(false);
+      // Close the modal since we're opening externally
+      onClose();
     } catch (e) {
-      console.log('PDF load error:', e);
+      console.log('PDF open error:', e);
       setError(true);
       setLoading(false);
     }
   };
 
-  const renderContent = () => {
-    if (loading) {
-      return (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={COLORS.bronze} />
-          <Text style={styles.loadingText}>Loading PDF...</Text>
-        </View>
-      );
-    }
-
-    if (error) {
-      return (
-        <View style={styles.center}>
-          <Text style={styles.errorIcon}>⚠️</Text>
-          <Text style={styles.errorText}>Could not load this PDF</Text>
-          <Text style={styles.errorSub}>The file may be damaged or in an unsupported format.</Text>
-        </View>
-      );
-    }
-
-    // Render PDF via WebView with Google Docs viewer or direct embed
-    const pdfHtml = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0">
-        <style>
-          * { margin: 0; padding: 0; }
-          body { background: #525659; display: flex; justify-content: center; }
-          embed, iframe { width: 100%; height: 100vh; border: none; }
-        </style>
-      </head>
-      <body>
-        <embed src="${base64Data}" type="application/pdf" width="100%" height="100%">
-      </body>
-      </html>
-    `;
-
-    return (
-      <WebView
-        style={styles.webview}
-        source={{ html: pdfHtml }}
-        javaScriptEnabled
-        domStorageEnabled
-        scalesPageToFit
-        setBuiltInZoomControls
-        setDisplayZoomControls={false}
-        startInLoadingState
-        renderLoading={() => (
-          <View style={styles.center}>
-            <ActivityIndicator size="large" color={COLORS.bronze} />
-          </View>
-        )}
-      />
-    );
-  };
-
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={styles.container}>
-        {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
             <Text style={styles.closeText}>← Back</Text>
@@ -118,9 +87,28 @@ export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
           <View style={{ width: 60 }} />
         </View>
 
-        {/* Content */}
         <View style={styles.content}>
-          {renderContent()}
+          {loading ? (
+            <View style={styles.center}>
+              <ActivityIndicator size="large" color={COLORS.bronze} />
+              <Text style={styles.loadingText}>Opening PDF...</Text>
+            </View>
+          ) : error ? (
+            <View style={styles.center}>
+              <Text style={styles.errorIcon}>⚠️</Text>
+              <Text style={styles.errorText}>Could not open this PDF</Text>
+              <Text style={styles.errorSub}>
+                Your device may not have a PDF viewer installed.
+              </Text>
+              <TouchableOpacity style={styles.retryBtn} onPress={openPDF}>
+                <Text style={styles.retryText}>Try Again</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.center}>
+              <Text style={styles.successText}>PDF should be opening...</Text>
+            </View>
+          )}
         </View>
       </View>
     </Modal>
@@ -144,10 +132,12 @@ const styles = StyleSheet.create({
   closeText: { fontSize: 16, color: COLORS.bronze, fontWeight: '600' },
   title: { fontSize: 16, fontWeight: '600', color: '#fff', flex: 1, textAlign: 'center' },
   content: { flex: 1 },
-  webview: { flex: 1, backgroundColor: '#525659' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#1a1a1a' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#1a1a1a', padding: 20 },
   loadingText: { color: COLORS.textSecondary, marginTop: 12, fontSize: 14 },
   errorIcon: { fontSize: 48, marginBottom: 12 },
   errorText: { fontSize: 18, fontWeight: '600', color: '#fff', marginBottom: 8 },
-  errorSub: { fontSize: 14, color: COLORS.textSecondary, textAlign: 'center', paddingHorizontal: 40 },
+  errorSub: { fontSize: 14, color: COLORS.textSecondary, textAlign: 'center', paddingHorizontal: 40, lineHeight: 20 },
+  successText: { fontSize: 16, color: COLORS.green },
+  retryBtn: { marginTop: 20, backgroundColor: COLORS.bronze, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 8 },
+  retryText: { color: '#fff', fontSize: 16, fontWeight: '600' },
 });
