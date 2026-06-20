@@ -1,4 +1,4 @@
-name: Build APK
+name: Build & Release APK
 
 on:
   push:
@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,8 +42,23 @@ jobs:
         working-directory: ./android
         run: ./gradlew assembleDebug --no-daemon
 
-      - name: Upload APK
+      - name: Upload APK as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bike-binder-debug
+          name: bike-binder-apk
           path: android/app/build/outputs/apk/debug/*.apk
+
+      - name: Get version from app.json
+        run: echo "VERSION=$(node -p "require('./app.json').expo.version")" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          name: Bike Binder v${{ env.VERSION }}
+          body: |
+            Latest APK build for Bike Binder.
+            
+            Download the APK below and install on your Android device.
+          files: android/app/build/outputs/apk/debug/*.apk
+          generate_release_notes: true

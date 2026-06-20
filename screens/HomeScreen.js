@@ -91,14 +91,6 @@ export default function HomeScreen({ navigation }) {
 
   const cards = [
     {
-      id: 'bikes',
-      label: 'Bikes in Garage',
-      value: totalBikes,
-      icon: '🏍',
-      color: COLORS.bronze,
-      onPress: () => navigation.navigate('MotorcyclesTab'),
-    },
-    {
       id: 'due',
       label: 'Services Due',
       value: servicesDue,

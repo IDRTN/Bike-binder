@@ -91,6 +91,9 @@ export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
         source={{ html: pdfHtml }}
         javaScriptEnabled
         domStorageEnabled
+        scalesPageToFit
+        setBuiltInZoomControls
+        setDisplayZoomControls={false}
         startInLoadingState
         renderLoading={() => (
           <View style={styles.center}>

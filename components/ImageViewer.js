@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import {
   Modal,
   View,
@@ -8,25 +8,65 @@ import {
   Text,
   Dimensions,
   StatusBar,
-  ScrollView,
+  Animated,
+  PanResponder,
 } from 'react-native';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function ImageViewer({ visible, imageUri, onClose }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const lastScale = useRef(1);
+  const lastDistance = useRef(0);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        lastScale.current = scale.__getValue();
+      },
+      onPanResponderMove: (evt, gestureState) => {
+        const touches = evt.nativeEvent.touches;
+        if (touches.length === 2) {
+          // Pinch to zoom
+          const dx = touches[0].pageX - touches[1].pageX;
+          const dy = touches[0].pageY - touches[1].pageY;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+
+          if (lastDistance.current > 0) {
+            const newScale = Math.max(0.5, Math.min(5, lastScale.current * (distance / lastDistance.current)));
+            scale.setValue(newScale);
+          }
+          lastDistance.current = distance;
+        } else if (touches.length === 1 && lastDistance.current === 0) {
+          // Single touch - pan
+          pan.setValue({ x: gestureState.dx, y: gestureState.dy });
+        }
+      },
+      onPanResponderRelease: () => {
+        lastDistance.current = 0;
+        // Snap back if zoomed out
+        const currentScale = scale.__getValue();
+        if (currentScale < 1) {
+          Animated.spring(scale, { toValue: 1, useNativeDriver: true }).start();
+          Animated.spring(pan, { toValue: { x: 0, y: 0 }, useNativeDriver: true }).start();
+        }
+      },
+    })
+  ).current;
+
   return (
     <Modal visible={visible} transparent animationType="fade" statusBarTranslucent>
       <StatusBar hidden />
       <View style={styles.overlay}>
-        <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
-          maximumZoomScale={5}
-          minimumZoomScale={1}
-          centerContent
-          bouncesZoom
-          showsHorizontalScrollIndicator={false}
-          showsVerticalScrollIndicator={false}
+        <Animated.View
+          style={[
+            styles.zoomContainer,
+            { transform: [{ scale }, { translateX: pan.x }, { translateY: pan.y }] },
+          ]}
+          {...panResponder.panHandlers}
         >
           {imageUri ? (
             <Image
@@ -35,11 +75,10 @@ export default function ImageViewer({ visible, imageUri, onClose }) {
               resizeMode="contain"
             />
           ) : null}
-        </ScrollView>
+        </Animated.View>
         <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
           <Text style={styles.closeBtnText}>✕</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.tapClose} activeOpacity={1} onPress={onClose} />
       </View>
     </Modal>
   );
@@ -49,21 +88,14 @@ const styles = StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.95)',
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    flexGrow: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  tapClose: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 50,
+  zoomContainer: {
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT * 0.85,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   image: {
     width: SCREEN_WIDTH - 24,
