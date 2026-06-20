@@ -7,7 +7,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   Linking,
-  Alert,
+  Platform,
 } from 'react-native';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -16,6 +16,7 @@ import { COLORS } from '../theme';
 export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
   React.useEffect(() => {
     if (visible && fileUri) {
@@ -27,49 +28,68 @@ export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
     try {
       setLoading(true);
       setError(false);
+      setErrorMsg('');
 
       // If it's a web URL, open directly
       if (fileUri.startsWith('http://') || fileUri.startsWith('https://')) {
         const supported = await Linking.canOpenURL(fileUri);
         if (supported) {
           await Linking.openURL(fileUri);
+          onClose();
         } else {
           setError(true);
+          setErrorMsg('Cannot open web URLs on this device.');
         }
         setLoading(false);
         return;
       }
 
-      // For local files, copy to a permanent cache location and share/open
+      // Copy file to a cache location for reliable access
       const cacheDir = FileSystem.cacheDirectory + 'pdfs/';
       await FileSystem.makeDirectoryAsync(cacheDir, { intermediates: true });
       const dest = cacheDir + (fileName || 'manual.pdf');
 
-      // Copy file to cache
       await FileSystem.copyAsync({ from: fileUri, to: dest });
 
-      // Try sharing/open with system PDF viewer
+      // Get a content:// URI that Android can share with PDF viewers
+      const contentUri = await FileSystem.getContentUriAsync(dest);
+
+      // Try sharing first (opens system share sheet with PDF viewer options)
       if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(dest, {
+        await Sharing.shareAsync(contentUri, {
           mimeType: 'application/pdf',
           dialogTitle: fileName || 'Manual',
         });
-      } else {
-        // Fallback: try to open directly
-        const supported = await Linking.canOpenURL(dest);
-        if (supported) {
-          await Linking.openURL(dest);
-        } else {
-          setError(true);
-        }
+        setLoading(false);
+        onClose();
+        return;
       }
 
+      // Fallback: try opening the content URI directly
+      const canOpen = await Linking.canOpenURL(contentUri);
+      if (canOpen) {
+        await Linking.openURL(contentUri);
+        setLoading(false);
+        onClose();
+        return;
+      }
+
+      // Last resort: try with file:// URI
+      const canOpenFile = await Linking.canOpenURL(dest);
+      if (canOpenFile) {
+        await Linking.openURL(dest);
+        setLoading(false);
+        onClose();
+        return;
+      }
+
+      setError(true);
+      setErrorMsg('No PDF viewer app found on your device.');
       setLoading(false);
-      // Close the modal since we're opening externally
-      onClose();
     } catch (e) {
       console.log('PDF open error:', e);
       setError(true);
+      setErrorMsg(e.message || 'Could not open the PDF file.');
       setLoading(false);
     }
   };
@@ -97,18 +117,15 @@ export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
             <View style={styles.center}>
               <Text style={styles.errorIcon}>⚠️</Text>
               <Text style={styles.errorText}>Could not open this PDF</Text>
-              <Text style={styles.errorSub}>
-                Your device may not have a PDF viewer installed.
+              <Text style={styles.errorSub}>{errorMsg}</Text>
+              <Text style={styles.tip}>
+                Tip: Install a PDF reader like "Google PDF Viewer" from the Play Store, then try again.
               </Text>
               <TouchableOpacity style={styles.retryBtn} onPress={openPDF}>
                 <Text style={styles.retryText}>Try Again</Text>
               </TouchableOpacity>
             </View>
-          ) : (
-            <View style={styles.center}>
-              <Text style={styles.successText}>PDF should be opening...</Text>
-            </View>
-          )}
+          ) : null}
         </View>
       </View>
     </Modal>
@@ -136,8 +153,8 @@ const styles = StyleSheet.create({
   loadingText: { color: COLORS.textSecondary, marginTop: 12, fontSize: 14 },
   errorIcon: { fontSize: 48, marginBottom: 12 },
   errorText: { fontSize: 18, fontWeight: '600', color: '#fff', marginBottom: 8 },
-  errorSub: { fontSize: 14, color: COLORS.textSecondary, textAlign: 'center', paddingHorizontal: 40, lineHeight: 20 },
-  successText: { fontSize: 16, color: COLORS.green },
+  errorSub: { fontSize: 14, color: COLORS.textSecondary, textAlign: 'center', paddingHorizontal: 40, lineHeight: 20, marginBottom: 16 },
+  tip: { fontSize: 13, color: COLORS.steelLight, textAlign: 'center', paddingHorizontal: 30, lineHeight: 18, fontStyle: 'italic' },
   retryBtn: { marginTop: 20, backgroundColor: COLORS.bronze, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 8 },
   retryText: { color: '#fff', fontSize: 16, fontWeight: '600' },
 });
