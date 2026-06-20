@@ -90,14 +90,11 @@ export default function PDFViewer({ visible, fileUri, fileName, manualId, onClos
       }
 
       // Load PDF.js library from local asset
-      const pdfjsAsset = Asset.fromModule(require('../assets/pdfjs/pdf.min.js'));
+      const pdfjsAsset = Asset.fromModule(require('../assets/pdfjs/pdf.min.txt'));
       await pdfjsAsset.downloadAsync();
       const pdfjsCode = await FileSystem.readAsStringAsync(pdfjsAsset.localUri);
 
       // Load PDF.js worker from local asset
-      const workerAsset = Asset.fromModule(require('../assets/pdfjs/pdf.worker.min.js'));
-      await workerAsset.downloadAsync();
-      const workerCode = await FileSystem.readAsStringAsync(workerAsset.localUri);
 
       // Build HTML — PDF.js renders PDF fully inside the WebView
       // All pages rendered for smooth scrolling
@@ -141,8 +138,7 @@ body{background:#525659;font-family:sans-serif;overflow-x:hidden}
 ${pdfjsCode}
 (function(){
 var blob = new Blob([${JSON.stringify(workerCode)}], {type:'application/javascript'});
-pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(blob);
-})();
+pdfjsLib.GlobalWorkerOptions.workerSrc = '';
 
 var pdfDoc=null, curPage=1;
 var viewer=document.getElementById('viewer');
