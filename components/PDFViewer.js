@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Modal,
   View,
@@ -6,59 +6,152 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
-  Linking,
+  Platform,
 } from 'react-native';
+import { WebView } from 'react-native-webview';
 import * as FileSystem from 'expo-file-system';
 import { COLORS } from '../theme';
 
 export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
+  const [base64Data, setBase64Data] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState(false);
+  const [errorMsg, setErrorMsg] = React.useState('');
 
   React.useEffect(() => {
     if (visible && fileUri) {
-      openPDF();
+      loadPDF();
     }
   }, [visible, fileUri]);
 
-  const openPDF = async () => {
+  const loadPDF = async () => {
     try {
       setLoading(true);
       setError(false);
-      setErrorMsg('');
 
-      // If it's a web URL, open directly
+      // If it's a web URL, use it directly
       if (fileUri.startsWith('http://') || fileUri.startsWith('https://')) {
-        await Linking.openURL(fileUri);
+        setBase64Data(fileUri);
         setLoading(false);
-        onClose();
         return;
       }
 
-      // Copy file to cache for reliable access
-      const cacheDir = FileSystem.cacheDirectory + 'pdfs/';
-      await FileSystem.makeDirectoryAsync(cacheDir, { intermediates: true });
-      const dest = cacheDir + (fileName || 'manual.pdf');
-      await FileSystem.copyAsync({ from: fileUri, to: dest });
-
-      // Get a content:// URI that Android can use to open with system viewer
-      const contentUri = await FileSystem.getContentUriAsync(dest);
-
-      // Use ACTION_VIEW intent — this opens the PDF with the device's
-      // built-in PDF viewer (or default handler), NOT a share sheet
-      await Linking.openURL(contentUri);
-
+      // Read local file as base64
+      const base64 = await FileSystem.readAsStringAsync(fileUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      setBase64Data(`data:application/pdf;base64,${base64}`);
       setLoading(false);
-      onClose();
     } catch (e) {
-      console.log('PDF open error:', e);
+      console.log('PDF load error:', e);
       setError(true);
-      setErrorMsg(
-        e.message || 'Could not open the PDF. Your device may not have a PDF viewer.'
-      );
+      setErrorMsg(e.message || 'Could not load the PDF file.');
       setLoading(false);
     }
+  };
+
+  const renderContent = () => {
+    if (loading) {
+      return (
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={COLORS.bronze} />
+          <Text style={styles.loadingText}>Loading PDF...</Text>
+        </View>
+      );
+    }
+
+    if (error) {
+      return (
+        <View style={styles.center}>
+          <Text style={styles.errorIcon}>⚠️</Text>
+          <Text style={styles.errorText}>Could not load this PDF</Text>
+          <Text style={styles.errorSub}>{errorMsg}</Text>
+          <TouchableOpacity style={styles.retryBtn} onPress={loadPDF}>
+            <Text style={styles.retryText}>Try Again</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
+    // Render PDF inline via WebView using Google Docs viewer
+    // This works on all platforms without needing a PDF plugin
+    const pdfUrl = encodeURIComponent(base64Data);
+    const googleViewerUrl = `https://docs.google.com/viewer?embedded=true&url=${pdfUrl}`;
+
+    // HTML that uses native PDF viewing - works in modern WebViews
+    const pdfHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { background: #525659; display: flex; justify-content: center; min-height: 100vh; }
+          embed, iframe { width: 100%; height: 100vh; border: none; }
+          .fallback {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            color: white;
+            font-family: sans-serif;
+            text-align: center;
+            padding: 20px;
+          }
+          .fallback a {
+            color: #c8953a;
+            text-decoration: underline;
+            margin-top: 16px;
+            font-size: 16px;
+          }
+        </style>
+      </head>
+      <body>
+        <embed src="${base64Data}" type="application/pdf" width="100%" height="100%" id="pdfEmbed">
+        <div class="fallback" id="fallback" style="display:none">
+          <p>Your browser doesn't support embedded PDFs.</p>
+          <a href="${base64Data}" download="manual.pdf">Download PDF</a>
+        </div>
+        <script>
+          // Check if PDF loaded, show fallback if not
+          var embed = document.getElementById('pdfEmbed');
+          setTimeout(function() {
+            // If embed didn't render, try iframe approach
+            var iframe = document.createElement('iframe');
+            iframe.src = '${googleViewerUrl}';
+            iframe.style.width = '100%';
+            iframe.style.height = '100vh';
+            iframe.style.border = 'none';
+            iframe.style.position = 'fixed';
+            iframe.style.top = '0';
+            iframe.style.left = '0';
+            embed.parentNode.replaceChild(iframe, embed);
+          }, 1000);
+        </script>
+      </body>
+      </html>
+    `;
+
+    return (
+      <WebView
+        style={styles.webview}
+        source={{ html: pdfHtml }}
+        javaScriptEnabled
+        domStorageEnabled
+        allowFileAccess
+        allowUniversalAccessFromFileURLs
+        allowFileAccessFromFileURLs
+        mixedContentMode="always"
+        originWhitelist={['*']}
+        startInLoadingState
+        renderLoading={() => (
+          <View style={styles.loadingOverlay}>
+            <ActivityIndicator size="large" color={COLORS.bronze} />
+          </View>
+        )}
+      />
+    );
   };
 
   return (
@@ -75,21 +168,7 @@ export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
         </View>
 
         <View style={styles.content}>
-          {loading ? (
-            <View style={styles.center}>
-              <ActivityIndicator size="large" color={COLORS.bronze} />
-              <Text style={styles.loadingText}>Opening PDF...</Text>
-            </View>
-          ) : error ? (
-            <View style={styles.center}>
-              <Text style={styles.errorIcon}>⚠️</Text>
-              <Text style={styles.errorText}>Could not open this PDF</Text>
-              <Text style={styles.errorSub}>{errorMsg}</Text>
-              <TouchableOpacity style={styles.retryBtn} onPress={openPDF}>
-                <Text style={styles.retryText}>Try Again</Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
+          {renderContent()}
         </View>
       </View>
     </Modal>
@@ -113,11 +192,13 @@ const styles = StyleSheet.create({
   closeText: { fontSize: 16, color: COLORS.bronze, fontWeight: '600' },
   title: { fontSize: 16, fontWeight: '600', color: '#fff', flex: 1, textAlign: 'center' },
   content: { flex: 1 },
+  webview: { flex: 1, backgroundColor: '#525659' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#1a1a1a', padding: 20 },
   loadingText: { color: COLORS.textSecondary, marginTop: 12, fontSize: 14 },
+  loadingOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: '#525659' },
   errorIcon: { fontSize: 48, marginBottom: 12 },
   errorText: { fontSize: 18, fontWeight: '600', color: '#fff', marginBottom: 8 },
-  errorSub: { fontSize: 14, color: COLORS.textSecondary, textAlign: 'center', paddingHorizontal: 40, lineHeight: 20 },
-  retryBtn: { marginTop: 20, backgroundColor: COLORS.bronze, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 8 },
+  errorSub: { fontSize: 14, color: COLORS.textSecondary, textAlign: 'center', paddingHorizontal: 40, lineHeight: 20, marginBottom: 16 },
+  retryBtn: { marginTop: 12, backgroundColor: COLORS.bronze, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 8 },
   retryText: { color: '#fff', fontSize: 16, fontWeight: '600' },
 });
