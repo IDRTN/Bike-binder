@@ -10,7 +10,7 @@ import {
   Alert,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Asset } from 'expo-asset';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS } from '../theme';

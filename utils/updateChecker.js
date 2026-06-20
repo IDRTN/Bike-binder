@@ -1,6 +1,5 @@
 import { Platform, Linking, Alert } from 'react-native';
 import Constants from 'expo-constants';
-import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 
 const GITHUB_REPO = 'IDRTN/Bike-binder';

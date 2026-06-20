@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { updateMotorcycle } from '../storage';
 import ImageViewer from './ImageViewer';
 import PDFViewer from './PDFViewer';
