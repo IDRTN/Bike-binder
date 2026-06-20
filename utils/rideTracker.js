@@ -23,6 +23,7 @@ let state = {
   status: 'idle', // idle | monitoring | tracking | stopping
   watchSubscription: null,
   lastLocation: null,
+  lastLocationTime: null,
   totalMeters: 0,
   startTime: null,
   highSpeedStartTime: null, // when speed first exceeded 10mph
@@ -46,11 +47,36 @@ function emitStatus(extra = {}) {
   }
 }
 
+function getSpeedMph(location, previousLocation, previousTime) {
+  // First try the GPS-reported speed
+  const { speed } = location.coords;
+  if (speed !== null && speed !== -1 && speed > 0) {
+    return speed * 2.23694;
+  }
+
+  // Fallback: calculate speed from distance between last two positions
+  if (previousLocation && previousTime) {
+    const dist = haversineDistance(
+      { latitude: previousLocation.latitude, longitude: previousLocation.longitude },
+      { latitude: location.coords.latitude, longitude: location.coords.longitude }
+    );
+    const timeSec = (Date.now() - previousTime) / 1000;
+    if (timeSec > 0 && dist > 5) {
+      const speedMs = dist / timeSec;
+      return speedMs * 2.23694; // m/s to mph
+    }
+  }
+
+  return 0;
+}
+
 async function handleLocation(location) {
-  const { latitude, longitude, speed } = location.coords;
-  // speed is in m/s, convert to mph
-  const speedMph = speed !== null && speed !== -1 ? speed * 2.23694 : 0;
+  const { latitude, longitude } = location.coords;
   const now = Date.now();
+
+  // Get speed using reported GPS or calculated from position change
+  const speedMph = getSpeedMph(location, state.lastLocation, state.lastLocationTime);
+  const currentPos = { latitude, longitude };
 
   switch (state.status) {
     case 'idle':
@@ -67,7 +93,8 @@ async function handleLocation(location) {
           state.status = 'tracking';
           state.startTime = now;
           state.totalMeters = 0;
-          state.lastLocation = { latitude, longitude };
+          state.lastLocation = currentPos;
+          state.lastLocationTime = now;
           state.lowSpeedStartTime = null;
           emitStatus({ event: 'ride_started' });
           return;
@@ -76,6 +103,9 @@ async function handleLocation(location) {
         // Speed dropped — reset high-speed timer
         state.highSpeedStartTime = null;
       }
+      // Always update last location for speed calculation
+      state.lastLocation = currentPos;
+      state.lastLocationTime = now;
       emitStatus();
       break;
 
@@ -83,17 +113,20 @@ async function handleLocation(location) {
       if (speedMph > 10) {
         // Still riding — accumulate distance
         if (state.lastLocation) {
-          const dist = haversineDistance(state.lastLocation, { latitude, longitude });
+          const dist = haversineDistance(state.lastLocation, currentPos);
           // Only count if more than 5 meters (filter GPS noise)
           if (dist > 5) {
             state.totalMeters += dist;
           }
         }
-        state.lastLocation = { latitude, longitude };
+        state.lastLocation = currentPos;
+        state.lastLocationTime = now;
         state.lowSpeedStartTime = null; // reset low-speed timer
         emitStatus();
       } else {
         // Speed dropped below 10mph
+        state.lastLocation = currentPos;
+        state.lastLocationTime = now;
         if (!state.lowSpeedStartTime) {
           state.lowSpeedStartTime = now;
         } else if (now - state.lowSpeedStartTime >= 300000) {
@@ -118,6 +151,7 @@ export async function startMonitoring() {
   state.totalMeters = 0;
   state.startTime = null;
   state.lastLocation = null;
+  state.lastLocationTime = null;
   state.highSpeedStartTime = null;
   state.lowSpeedStartTime = null;
 
@@ -147,6 +181,7 @@ export function stopTracking() {
 
   state.status = 'idle';
   state.lastLocation = null;
+  state.lastLocationTime = null;
   state.highSpeedStartTime = null;
   state.lowSpeedStartTime = null;
 
