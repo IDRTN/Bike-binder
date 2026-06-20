@@ -6,14 +6,13 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
-  Platform,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as FileSystem from 'expo-file-system';
 import { COLORS } from '../theme';
 
 export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
-  const [base64Data, setBase64Data] = React.useState(null);
+  const [pdfHtml, setPdfHtml] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState(false);
   const [errorMsg, setErrorMsg] = React.useState('');
@@ -21,6 +20,8 @@ export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
   React.useEffect(() => {
     if (visible && fileUri) {
       loadPDF();
+    } else {
+      setPdfHtml(null);
     }
   }, [visible, fileUri]);
 
@@ -29,18 +30,114 @@ export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
       setLoading(true);
       setError(false);
 
-      // If it's a web URL, use it directly
+      let pdfData;
+
       if (fileUri.startsWith('http://') || fileUri.startsWith('https://')) {
-        setBase64Data(fileUri);
-        setLoading(false);
-        return;
+        const response = await fetch(fileUri);
+        const blob = await response.blob();
+        pdfData = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result.split(',')[1]);
+          reader.readAsDataURL(blob);
+        });
+      } else {
+        pdfData = await FileSystem.readAsStringAsync(fileUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
       }
 
-      // Read local file as base64
-      const base64 = await FileSystem.readAsStringAsync(fileUri, {
-        encoding: FileSystem.EncodingType.Base64,
+      // Build HTML with PDF.js — renders PDF fully inside the WebView
+      const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #525659; font-family: sans-serif; }
+    #viewer { display: flex; flex-direction: column; align-items: center; padding: 8px 0; }
+    .page-container { margin: 4px auto; box-shadow: 0 2px 8px rgba(0,0,0,0.3); background: white; }
+    .page-container canvas { display: block; width: 100% !important; height: auto !important; }
+    .info { color: #ccc; text-align: center; padding: 40px 20px; font-size: 16px; }
+    .controls {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      background: rgba(0,0,0,0.85);
+      display: flex; justify-content: center; align-items: center;
+      padding: 12px; gap: 20px; z-index: 100;
+    }
+    .controls button {
+      background: #c8953a; color: white; border: none;
+      padding: 8px 20px; border-radius: 6px; font-size: 14px;
+      font-weight: 600; min-width: 70px;
+    }
+    .controls span { color: white; font-size: 14px; min-width: 80px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div id="viewer"><div class="info">Loading PDF...</div></div>
+  <div class="controls" id="controls" style="display:none">
+    <button onclick="prevPage()">◀ Prev</button>
+    <span id="pageInfo">-</span>
+    <button onclick="nextPage()">Next ▶</button>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    let pdfDoc = null;
+    let currentPage = 1;
+    const viewer = document.getElementById('viewer');
+    const pageInfo = document.getElementById('pageInfo');
+    const controls = document.getElementById('controls');
+
+    // Load PDF from base64 data URI
+    const loadingTask = pdfjsLib.getDocument("data:application/pdf;base64,${pdfData}");
+
+    loadingTask.promise.then(function(pdf) {
+      pdfDoc = pdf;
+      document.querySelector('.info').style.display = 'none';
+      controls.style.display = 'flex';
+      pageInfo.textContent = '1 / ' + pdf.numPages;
+      renderPage(1);
+    }).catch(function(err) {
+      viewer.innerHTML = '<div class="info">Failed to load PDF: ' + err.message + '</div>';
+    });
+
+    function renderPage(num) {
+      if (!pdfDoc) return;
+      pdfDoc.getPage(num).then(function(page) {
+        const viewport = page.getViewport({ scale: 1.5 });
+        const canvas = document.createElement('canvas');
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+
+        const container = document.createElement('div');
+        container.className = 'page-container';
+        container.appendChild(canvas);
+        viewer.innerHTML = '';
+        viewer.appendChild(container);
+
+        const ctx = canvas.getContext('2d');
+        page.render({ canvasContext: ctx, viewport: viewport }).promise.then(function() {
+          pageInfo.textContent = num + ' / ' + pdfDoc.numPages;
+          currentPage = num;
+        });
       });
-      setBase64Data(`data:application/pdf;base64,${base64}`);
+    }
+
+    function prevPage() {
+      if (currentPage > 1) renderPage(currentPage - 1);
+    }
+
+    function nextPage() {
+      if (currentPage < pdfDoc.numPages) renderPage(currentPage + 1);
+    }
+  </script>
+</body>
+</html>`;
+
+      setPdfHtml(html);
       setLoading(false);
     } catch (e) {
       console.log('PDF load error:', e);
@@ -48,110 +145,6 @@ export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
       setErrorMsg(e.message || 'Could not load the PDF file.');
       setLoading(false);
     }
-  };
-
-  const renderContent = () => {
-    if (loading) {
-      return (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={COLORS.bronze} />
-          <Text style={styles.loadingText}>Loading PDF...</Text>
-        </View>
-      );
-    }
-
-    if (error) {
-      return (
-        <View style={styles.center}>
-          <Text style={styles.errorIcon}>⚠️</Text>
-          <Text style={styles.errorText}>Could not load this PDF</Text>
-          <Text style={styles.errorSub}>{errorMsg}</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={loadPDF}>
-            <Text style={styles.retryText}>Try Again</Text>
-          </TouchableOpacity>
-        </View>
-      );
-    }
-
-    // Render PDF inline via WebView using Google Docs viewer
-    // This works on all platforms without needing a PDF plugin
-    const pdfUrl = encodeURIComponent(base64Data);
-    const googleViewerUrl = `https://docs.google.com/viewer?embedded=true&url=${pdfUrl}`;
-
-    // HTML that uses native PDF viewing - works in modern WebViews
-    const pdfHtml = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
-        <style>
-          * { margin: 0; padding: 0; box-sizing: border-box; }
-          body { background: #525659; display: flex; justify-content: center; min-height: 100vh; }
-          embed, iframe { width: 100%; height: 100vh; border: none; }
-          .fallback {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            color: white;
-            font-family: sans-serif;
-            text-align: center;
-            padding: 20px;
-          }
-          .fallback a {
-            color: #c8953a;
-            text-decoration: underline;
-            margin-top: 16px;
-            font-size: 16px;
-          }
-        </style>
-      </head>
-      <body>
-        <embed src="${base64Data}" type="application/pdf" width="100%" height="100%" id="pdfEmbed">
-        <div class="fallback" id="fallback" style="display:none">
-          <p>Your browser doesn't support embedded PDFs.</p>
-          <a href="${base64Data}" download="manual.pdf">Download PDF</a>
-        </div>
-        <script>
-          // Check if PDF loaded, show fallback if not
-          var embed = document.getElementById('pdfEmbed');
-          setTimeout(function() {
-            // If embed didn't render, try iframe approach
-            var iframe = document.createElement('iframe');
-            iframe.src = '${googleViewerUrl}';
-            iframe.style.width = '100%';
-            iframe.style.height = '100vh';
-            iframe.style.border = 'none';
-            iframe.style.position = 'fixed';
-            iframe.style.top = '0';
-            iframe.style.left = '0';
-            embed.parentNode.replaceChild(iframe, embed);
-          }, 1000);
-        </script>
-      </body>
-      </html>
-    `;
-
-    return (
-      <WebView
-        style={styles.webview}
-        source={{ html: pdfHtml }}
-        javaScriptEnabled
-        domStorageEnabled
-        allowFileAccess
-        allowUniversalAccessFromFileURLs
-        allowFileAccessFromFileURLs
-        mixedContentMode="always"
-        originWhitelist={['*']}
-        startInLoadingState
-        renderLoading={() => (
-          <View style={styles.loadingOverlay}>
-            <ActivityIndicator size="large" color={COLORS.bronze} />
-          </View>
-        )}
-      />
-    );
   };
 
   return (
@@ -168,7 +161,39 @@ export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
         </View>
 
         <View style={styles.content}>
-          {renderContent()}
+          {loading ? (
+            <View style={styles.center}>
+              <ActivityIndicator size="large" color={COLORS.bronze} />
+              <Text style={styles.loadingText}>Loading PDF...</Text>
+            </View>
+          ) : error ? (
+            <View style={styles.center}>
+              <Text style={styles.errorIcon}>⚠️</Text>
+              <Text style={styles.errorText}>Could not load this PDF</Text>
+              <Text style={styles.errorSub}>{errorMsg}</Text>
+              <TouchableOpacity style={styles.retryBtn} onPress={loadPDF}>
+                <Text style={styles.retryText}>Try Again</Text>
+              </TouchableOpacity>
+            </View>
+          ) : pdfHtml ? (
+            <WebView
+              style={styles.webview}
+              source={{ html: pdfHtml }}
+              javaScriptEnabled
+              domStorageEnabled
+              allowFileAccess
+              allowUniversalAccessFromFileURLs
+              allowFileAccessFromFileURLs
+              mixedContentMode="always"
+              originWhitelist={['*']}
+              startInLoadingState
+              renderLoading={() => (
+                <View style={styles.loadingOverlay}>
+                  <ActivityIndicator size="large" color={COLORS.bronze} />
+                </View>
+              )}
+            />
+          ) : null}
         </View>
       </View>
     </Modal>
