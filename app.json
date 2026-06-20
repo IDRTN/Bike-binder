@@ -45,7 +45,8 @@
     "plugins": [
       "expo-image-picker",
       "expo-sharing",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-asset"
     ],
     "extra": {
       "eas": {
@@ -58,6 +59,9 @@
     },
     "runtimeVersion": {
       "policy": "appVersion"
-    }
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ]
   }
 }
