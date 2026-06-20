@@ -14,9 +14,9 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { updateMotorcycle } from '../storage';
 import ImageViewer from './ImageViewer';
+import PDFViewer from './PDFViewer';
 import { COLORS } from '../theme';
-import * as Sharing from 'expo-sharing';
-import * as FileSystem from 'expo-file-system';
+
 
 export default function ManualsSection({ motorcycle, onUpdate }) {
   const [showForm, setShowForm] = useState(false);
@@ -31,6 +31,8 @@ export default function ManualsSection({ motorcycle, onUpdate }) {
   const [editingId, setEditingId] = useState(null);
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerImage, setViewerImage] = useState(null);
+  const [pdfViewerVisible, setPdfViewerVisible] = useState(false);
+  const [pdfFile, setPdfFile] = useState(null);
 
   const openViewer = (uri) => {
     setViewerImage(uri);
@@ -118,37 +120,22 @@ export default function ManualsSection({ motorcycle, onUpdate }) {
     ? manuals.filter((m) => m.title.toLowerCase().includes(search.toLowerCase()) || (m.fileName && m.fileName.toLowerCase().includes(search.toLowerCase())))
     : manuals;
 
-  const openFile = async (item) => {
+  const openFile = (item) => {
     const isImage = item.fileUri?.match(/\.(png|jpg|jpeg|gif|webp)$/i);
     if (isImage) {
       openViewer(item.fileUri);
       return;
     }
-    // Try to open PDF with sharing (external viewer)
-    try {
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        // Copy to a cache location if needed (URIs from document picker work directly)
-        await Sharing.shareAsync(item.fileUri, {
-          mimeType: 'application/pdf',
-          dialogTitle: item.title,
-        });
-      } else {
-        // Fallback: try to open with WebBrowser
-        Linking.openURL(item.fileUri).catch(() => {
-          Alert.alert('Cannot Open', 'No PDF viewer available on this device.');
-        });
-      }
-    } catch (e) {
-      Alert.alert('Cannot Open', 'Unable to open this file.');
-    }
+    // Open PDF in in-app viewer
+    setPdfFile(item);
+    setPdfViewerVisible(true);
   };
 
   const renderManual = ({ item }) => {
     const isImage = item.fileUri?.match(/\.(png|jpg|jpeg|gif|webp)$/i);
     return (
-      <View style={styles.item}>
-        <TouchableOpacity onPress={() => openEdit(item)} onLongPress={() => removeManual(item.id)}>
+      <View style={[styles.item, { position: 'relative' }]}>
+        <TouchableOpacity onPress={() => openFile(item)} onLongPress={() => removeManual(item.id)}>
           <View style={styles.itemRow}>
             {isImage ? (
               <TouchableOpacity onPress={() => openViewer(item.fileUri)}>
@@ -169,12 +156,11 @@ export default function ManualsSection({ motorcycle, onUpdate }) {
             <Text style={styles.editIcon}>✎</Text>
           </View>
         </TouchableOpacity>
-        {/* View button for PDF files */}
-        {!isImage && (
-          <TouchableOpacity style={styles.viewBtn} onPress={() => openFile(item)}>
-            <Text style={styles.viewBtnText}>Open PDF</Text>
-          </TouchableOpacity>
-        )}
+
+        {/* Delete button */}
+        <TouchableOpacity style={styles.deleteIcon} onPress={() => removeManual(item.id)}>
+          <Text style={styles.deleteIconText}>✕</Text>
+        </TouchableOpacity>
       </View>
     );
   };
@@ -224,6 +210,7 @@ export default function ManualsSection({ motorcycle, onUpdate }) {
       )}
       {search && filtered.length === 0 && <Text style={styles.noResults}>No manuals match your search.</Text>}
 
+      <PDFViewer visible={pdfViewerVisible} fileUri={pdfFile?.fileUri} fileName={pdfFile?.fileName || pdfFile?.title} onClose={() => setPdfViewerVisible(false)} />
       <ImageViewer visible={viewerVisible} imageUri={viewerImage} onClose={() => setViewerVisible(false)} />
     </View>
   );
@@ -259,5 +246,7 @@ const styles = StyleSheet.create({
   itemSub: { fontSize: 13, color: COLORS.textSecondary, marginTop: 2 },
   refText: { fontSize: 12, color: COLORS.bronze, marginTop: 4, fontWeight: '500' },
   editIcon: { fontSize: 18, color: COLORS.textSecondary, marginLeft: 8 },
+  deleteIcon: { position: 'absolute', top: 8, right: 8, width: 32, height: 32, borderRadius: 16, backgroundColor: COLORS.red + '20', justifyContent: 'center', alignItems: 'center' },
+  deleteIconText: { fontSize: 14 },
   noResults: { textAlign: 'center', color: COLORS.textSecondary, marginTop: 20 },
 });

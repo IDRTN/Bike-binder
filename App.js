@@ -76,7 +76,7 @@ function AppTabs() {
         name="DirectionsTab"
         component={DirectionsScreen}
         options={{
-          tabBarLabel: 'Directions',
+          tabBarLabel: 'Tracker',
           tabBarIcon: ({ color, size }) => <Text style={{ fontSize: size, color }}>🗺</Text>,
         }}
       />

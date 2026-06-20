@@ -5,15 +5,11 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  Platform,
-  Linking,
-  ActivityIndicator,
   Modal,
   Pressable,
   Alert,
   ScrollView,
 } from 'react-native';
-import { WebView } from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { loadMotorcycles, updateMotorcycle } from '../storage';
@@ -21,16 +17,8 @@ import {
   startMonitoring,
   stopTracking,
   setStatusCallback,
-  loadPendingRides,
 } from '../utils/rideTracker';
 import { COLORS } from '../theme';
-
-const QUICK_DESTINATIONS = [
-  { label: 'Gas Station', query: 'gas station near me' },
-  { label: 'Motorcycle Shop', query: 'motorcycle shop near me' },
-  { label: 'Repair Shop', query: 'motorcycle repair near me' },
-  { label: 'Scenic Route', query: 'best motorcycle roads near me' },
-];
 
 function formatDuration(seconds) {
   const h = Math.floor(seconds / 3600);
@@ -43,11 +31,8 @@ function formatDuration(seconds) {
 
 export default function DirectionsScreen() {
   const insets = useSafeAreaInsets();
-  const webRef = useRef(null);
-  const [destination, setDestination] = useState('');
-  const [mapLoaded, setMapLoaded] = useState(false);
 
-  // Bike selection & ride logging
+  // Bike selection
   const [bikes, setBikes] = useState([]);
   const [selectedBike, setSelectedBike] = useState(null);
   const [showBikePicker, setShowBikePicker] = useState(false);
@@ -55,7 +40,7 @@ export default function DirectionsScreen() {
   const [rideMiles, setRideMiles] = useState('');
 
   // Ride tracker state
-  const [trackerStatus, setTrackerStatus] = useState('idle'); // idle | monitoring | tracking
+  const [trackerStatus, setTrackerStatus] = useState('idle');
   const [trackerMiles, setTrackerMiles] = useState('0.0');
   const [trackerDuration, setTrackerDuration] = useState(0);
   const [trackerEvent, setTrackerEvent] = useState('');
@@ -79,7 +64,6 @@ export default function DirectionsScreen() {
     });
 
     return () => {
-      // Cleanup: stop tracking when leaving screen
       stopTracking();
       setStatusCallback(null);
     };
@@ -97,38 +81,6 @@ export default function DirectionsScreen() {
       })();
     }, [])
   );
-
-  const searchMap = (query) => {
-    const q = query || destination.trim();
-    if (!q) return;
-    const encoded = encodeURIComponent(q);
-    const url = `https://www.google.com/maps/search/${encoded}`;
-    if (webRef.current) {
-      webRef.current.injectJavaScript(`window.location.href = '${url}'; true;`);
-    }
-  };
-
-  const getDirections = () => {
-    const q = destination.trim();
-    if (!q) { searchMap(''); return; }
-    const encoded = encodeURIComponent(q);
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${encoded}&travelmode=driving`;
-    if (webRef.current) {
-      webRef.current.injectJavaScript(`window.location.href = '${url}'; true;`);
-    }
-  };
-
-  const openInMapsApp = () => {
-    const q = destination.trim() || 'motorcycle shop near me';
-    const encoded = encodeURIComponent(q);
-    const url = Platform.select({
-      ios: `https://maps.apple.com/?q=${encoded}`,
-      android: `https://maps.google.com/maps?q=${encoded}`,
-    });
-    Linking.canOpenURL(url).then((ok) => {
-      if (ok) Linking.openURL(url);
-    });
-  };
 
   const handleStartTracker = async () => {
     try {
@@ -171,11 +123,11 @@ export default function DirectionsScreen() {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Directions</Text>
-        <Text style={styles.headerSub}>Navigate & track rides</Text>
+        <Text style={styles.headerTitle}>Ride Tracker</Text>
+        <Text style={styles.headerSub}>GPS mileage tracking</Text>
       </View>
 
-      {/* Bike selector + Log Ride */}
+      {/* Bike selector */}
       <View style={styles.bikeBar}>
         <TouchableOpacity
           style={styles.bikeSelector}
@@ -195,123 +147,86 @@ export default function DirectionsScreen() {
 
         {selectedBike && !isTrackingActive && (
           <TouchableOpacity style={styles.logRideBtn} onPress={() => setShowLogRide(true)}>
-            <Text style={styles.logRideBtnText}>+ Log Ride</Text>
+            <Text style={styles.logRideBtnText}>+ Log</Text>
           </TouchableOpacity>
         )}
       </View>
 
-      {/* Ride Tracker Panel */}
-      <View style={[styles.trackerPanel, isTrackingActive && styles.trackerPanelActive]}>
-        <View style={styles.trackerRow}>
-          <View style={styles.trackerInfo}>
-            <Text style={styles.trackerTitle}>
-              {trackerStatus === 'tracking'
-                ? '🏁 Tracking Ride'
-                : trackerStatus === 'monitoring'
-                ? '⏳ Monitoring...'
-                : '📍 Ride Tracker'}
+      {/* Main content area */}
+      <View style={styles.mainContent}>
+        {/* Tracker Panel */}
+        <View style={[styles.trackerPanel, isTrackingActive && styles.trackerPanelActive]}>
+          <View style={styles.trackerIcon}>
+            <Text style={styles.trackerIconText}>
+              {trackerStatus === 'tracking' ? '🏁' : trackerStatus === 'monitoring' ? '⏳' : '📍'}
             </Text>
-            {trackerEvent ? (
-              <Text style={styles.trackerEvent}>{trackerEvent}</Text>
-            ) : (
-              !isTrackingActive && (
-                <Text style={styles.trackerHint}>
-                  Auto-detects when you ride above 10 mph
-                </Text>
-              )
-            )}
           </View>
-          {!isTrackingActive ? (
-            <TouchableOpacity style={styles.startTrackBtn} onPress={handleStartTracker}>
-              <Text style={styles.startTrackBtnText}>Start</Text>
-            </TouchableOpacity>
+
+          <Text style={styles.trackerTitle}>
+            {trackerStatus === 'tracking'
+              ? 'Tracking Ride'
+              : trackerStatus === 'monitoring'
+              ? 'Monitoring...'
+              : 'Ready'}
+          </Text>
+
+          {trackerEvent ? (
+            <Text style={styles.trackerEvent}>{trackerEvent}</Text>
           ) : (
-            <TouchableOpacity style={styles.stopTrackBtn} onPress={handleStopTracker}>
-              <Text style={styles.stopTrackBtnText}>Stop</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {isTrackingActive && (
-          <View style={styles.trackerStats}>
-            <View style={styles.trackerStat}>
-              <Text style={styles.trackerStatValue}>{trackerMiles}</Text>
-              <Text style={styles.trackerStatLabel}>miles</Text>
-            </View>
-            <View style={styles.trackerStat}>
-              <Text style={styles.trackerStatValue}>{formatDuration(trackerDuration)}</Text>
-              <Text style={styles.trackerStatLabel}>duration</Text>
-            </View>
-            <View style={styles.trackerStat}>
-              <Text style={[styles.trackerStatStatus, {
-                color: trackerStatus === 'tracking' ? COLORS.green : COLORS.yellow,
-              }]}>
-                {trackerStatus === 'tracking' ? 'Riding' : 'Waiting'}
+            !isTrackingActive && (
+              <Text style={styles.trackerHint}>
+                Auto-detects riding above 10 mph
               </Text>
-              <Text style={styles.trackerStatLabel}>status</Text>
-            </View>
-          </View>
-        )}
-      </View>
+            )
+          )}
 
-      {/* Search controls */}
-      <View style={styles.controls}>
-        <View style={styles.inputRow}>
-          <TextInput
-            style={styles.input}
-            placeholder="Search places..."
-            placeholderTextColor={COLORS.textSecondary}
-            value={destination}
-            onChangeText={setDestination}
-            onSubmitEditing={() => searchMap(null)}
-            returnKeyType="search"
-          />
-          <TouchableOpacity style={styles.goBtn} onPress={() => searchMap(null)}>
-            <Text style={styles.goBtnText}>Search</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.dirBtn} onPress={getDirections}>
-            <Text style={styles.dirBtnText}>Route</Text>
+          {/* Stats */}
+          {(isTrackingActive || trackerMiles !== '0.0') && (
+            <View style={styles.statsRow}>
+              <View style={styles.statBox}>
+                <Text style={styles.statValue}>{trackerMiles}</Text>
+                <Text style={styles.statLabel}>miles</Text>
+              </View>
+              <View style={styles.statBox}>
+                <Text style={styles.statValue}>{formatDuration(trackerDuration)}</Text>
+                <Text style={styles.statLabel}>duration</Text>
+              </View>
+              <View style={styles.statBox}>
+                <Text style={[styles.statStatus, {
+                  color: trackerStatus === 'tracking' ? COLORS.green : COLORS.yellow,
+                }]}>
+                  {trackerStatus === 'tracking' ? 'Riding' : 'Waiting'}
+                </Text>
+                <Text style={styles.statLabel}>status</Text>
+              </View>
+            </View>
+          )}
+
+          {/* Start/Stop button */}
+          <TouchableOpacity
+            style={[styles.actionBtn, isTrackingActive ? styles.stopBtn : styles.startBtn]}
+            onPress={isTrackingActive ? handleStopTracker : handleStartTracker}
+          >
+            <Text style={styles.actionBtnText}>
+              {isTrackingActive ? '■ Stop Tracking' : '▶ Start Tracking'}
+            </Text>
           </TouchableOpacity>
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.quickScroll}>
-          {QUICK_DESTINATIONS.map((item) => (
-            <TouchableOpacity
-              key={item.query}
-              style={styles.quickBtn}
-              onPress={() => {
-                setDestination(item.query);
-                searchMap(item.query);
-              }}
-            >
-              <Text style={styles.quickBtnText}>{item.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-
-        <TouchableOpacity style={styles.openAppBtn} onPress={openInMapsApp}>
-          <Text style={styles.openAppBtnText}>Open in Google Maps App</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Map WebView */}
-      <View style={styles.mapContainer}>
-        {!mapLoaded && (
-          <View style={styles.mapLoading}>
-            <ActivityIndicator size="large" color={COLORS.bronze} />
-            <Text style={styles.loadingText}>Loading map...</Text>
+        {/* Instructions */}
+        {!isTrackingActive && (
+          <View style={styles.infoCard}>
+            <Text style={styles.infoTitle}>How it works</Text>
+            <Text style={styles.infoText}>
+              1. Select your bike above{'\n'}
+              2. Tap "Start Tracking"{'\n'}
+              3. Ride! GPS detects speed > 10 mph{'\n'}
+              4. Tracking starts after 15 seconds{'\n'}
+              5. Stops automatically after 5 min idle{'\n'}
+              6. Log miles from the Home screen
+            </Text>
           </View>
         )}
-        <WebView
-          ref={webRef}
-          style={styles.map}
-          source={{ uri: 'https://www.google.com/maps' }}
-          onLoad={() => setMapLoaded(true)}
-          javaScriptEnabled
-          domStorageEnabled
-          startInLoadingState
-          geolocationEnabled
-        />
       </View>
 
       {/* Bike Picker Modal */}
@@ -352,7 +267,7 @@ export default function DirectionsScreen() {
         </Pressable>
       </Modal>
 
-      {/* Manual Log Ride Modal */}
+      {/* Log Ride Modal */}
       <Modal visible={showLogRide} transparent animationType="fade">
         <Pressable style={styles.modalOverlay} onPress={() => setShowLogRide(false)}>
           <View style={styles.modalContent}>
@@ -434,115 +349,104 @@ const styles = StyleSheet.create({
   },
   logRideBtnText: { color: COLORS.white, fontSize: 13, fontWeight: '700' },
 
+  // Main content
+  mainContent: {
+    flex: 1,
+    padding: 20,
+  },
+
   // Tracker panel
   trackerPanel: {
     backgroundColor: COLORS.card,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.cardBorder,
+    borderRadius: 20,
+    padding: 30,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.cardBorder,
   },
   trackerPanelActive: {
-    backgroundColor: COLORS.headerBg,
+    borderColor: COLORS.bronze,
+    borderWidth: 2,
   },
-  trackerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  trackerInfo: { flex: 1, marginRight: 12 },
-  trackerTitle: { fontSize: 15, fontWeight: '700', color: COLORS.text },
-  trackerEvent: { fontSize: 12, color: COLORS.bronze, marginTop: 2 },
-  trackerHint: { fontSize: 11, color: COLORS.textSecondary, marginTop: 2 },
-  startTrackBtn: {
-    backgroundColor: COLORS.green,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-  },
-  startTrackBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
-  stopTrackBtn: {
-    backgroundColor: COLORS.red,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-  },
-  stopTrackBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
-  trackerStats: {
-    flexDirection: 'row',
-    marginTop: 12,
-    gap: 12,
-  },
-  trackerStat: {
-    flex: 1,
-    alignItems: 'center',
+  trackerIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
     backgroundColor: COLORS.bg,
-    borderRadius: 10,
-    padding: 10,
-    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+    borderWidth: 2,
     borderColor: COLORS.cardBorder,
   },
-  trackerStatValue: { fontSize: 18, fontWeight: '800', color: COLORS.text },
-  trackerStatLabel: { fontSize: 10, color: COLORS.textSecondary, marginTop: 2, textTransform: 'uppercase' },
-  trackerStatStatus: { fontSize: 16, fontWeight: '700' },
-
-  // Controls
-  controls: {
-    backgroundColor: COLORS.card,
-    padding: 12,
-    paddingTop: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.cardBorder,
-  },
-  inputRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
-  input: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
-    borderWidth: 1,
-    borderColor: COLORS.cardBorder,
-    borderRadius: 10,
-    padding: 12,
-    fontSize: 15,
+  trackerIconText: { fontSize: 36 },
+  trackerTitle: {
+    fontSize: 22,
+    fontWeight: '800',
     color: COLORS.text,
+    marginBottom: 8,
   },
-  goBtn: {
-    backgroundColor: COLORS.bronze,
-    paddingHorizontal: 18,
-    borderRadius: 10,
-    justifyContent: 'center',
+  trackerEvent: {
+    fontSize: 14,
+    color: COLORS.bronze,
+    fontWeight: '600',
+    marginBottom: 16,
   },
-  goBtnText: { color: COLORS.white, fontSize: 14, fontWeight: '700' },
-  dirBtn: {
-    backgroundColor: '#aeaeb2',
-    paddingHorizontal: 14,
-    borderRadius: 10,
-    justifyContent: 'center',
+  trackerHint: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    marginBottom: 16,
+    textAlign: 'center',
   },
-  dirBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
-  quickScroll: { marginBottom: 8 },
-  quickBtn: {
+  statsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 20,
+    width: '100%',
+  },
+  statBox: {
+    flex: 1,
     backgroundColor: COLORS.bg,
+    borderRadius: 12,
+    padding: 14,
+    alignItems: 'center',
     borderWidth: 1,
     borderColor: COLORS.cardBorder,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 8,
-    marginRight: 8,
   },
-  quickBtnText: { color: COLORS.text, fontSize: 12, fontWeight: '500' },
-  openAppBtn: { alignItems: 'center', paddingVertical: 4 },
-  openAppBtnText: { color: COLORS.bronze, fontSize: 13, fontWeight: '600' },
+  statValue: { fontSize: 20, fontWeight: '800', color: COLORS.text },
+  statLabel: { fontSize: 10, color: COLORS.textSecondary, marginTop: 4, textTransform: 'uppercase' },
+  statStatus: { fontSize: 16, fontWeight: '700' },
+  actionBtn: {
+    paddingVertical: 16,
+    paddingHorizontal: 40,
+    borderRadius: 14,
+    width: '100%',
+    alignItems: 'center',
+  },
+  startBtn: { backgroundColor: COLORS.green },
+  stopBtn: { backgroundColor: COLORS.red },
+  actionBtnText: { color: '#fff', fontSize: 18, fontWeight: '700' },
 
-  // Map
-  mapContainer: { flex: 1 },
-  map: { flex: 1 },
-  mapLoading: {
-    position: 'absolute',
-    top: 0, left: 0, right: 0, bottom: 0,
-    justifyContent: 'center', alignItems: 'center',
-    backgroundColor: COLORS.bg, zIndex: 10,
+  // Info card
+  infoCard: {
+    marginTop: 24,
+    backgroundColor: COLORS.card,
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: COLORS.cardBorder,
   },
-  loadingText: { color: COLORS.textSecondary, marginTop: 12, fontSize: 14 },
+  infoTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.text,
+    marginBottom: 12,
+  },
+  infoText: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    lineHeight: 22,
+  },
 
   // Modals
   modalOverlay: {
@@ -571,6 +475,8 @@ const styles = StyleSheet.create({
     borderTopWidth: 1, borderTopColor: COLORS.cardBorder,
   },
   modalCloseText: { color: COLORS.textSecondary, fontSize: 15, fontWeight: '500' },
+
+  // Log ride modal
   logRideBike: { fontSize: 16, color: COLORS.bronze, fontWeight: '600', textAlign: 'center', marginBottom: 4 },
   logRideCurrent: { fontSize: 13, color: COLORS.textSecondary, textAlign: 'center', marginBottom: 16 },
   rideInput: {
