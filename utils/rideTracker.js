@@ -3,194 +3,256 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const PENDING_RIDE_KEY = '@bikebinder_pending_ride';
 
-// Haversine formula to calculate distance between two GPS points in meters
-function haversineDistance(coords1, coords2) {
-  const R = 6371000; // Earth radius in meters
-  const lat1 = (coords1.latitude * Math.PI) / 180;
-  const lat2 = (coords2.latitude * Math.PI) / 180;
-  const dLat = ((coords2.latitude - coords1.latitude) * Math.PI) / 180;
-  const dLon = ((coords2.longitude - coords1.longitude) * Math.PI) / 180;
+// ─── Helpers ────────────────────────────────────────────────────
 
+function haversineDistance(c1, c2) {
+  const R = 6371000;
+  const lat1 = (c1.latitude * Math.PI) / 180;
+  const lat2 = (c2.latitude * Math.PI) / 180;
+  const dLat = ((c2.latitude - c1.latitude) * Math.PI) / 180;
+  const dLon = ((c2.longitude - c1.longitude) * Math.PI) / 180;
   const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c; // meters
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// Track ride state
+// ─── State ──────────────────────────────────────────────────────
+
 let state = {
-  status: 'idle', // idle | monitoring | tracking | stopping
+  status: 'idle',           // idle → monitoring → tracking → idle
   watchSubscription: null,
   lastLocation: null,
   lastLocationTime: null,
   totalMeters: 0,
-  startTime: null,
-  highSpeedStartTime: null, // when speed first exceeded 10mph
-  lowSpeedStartTime: null,  // when speed first dropped below 10mph
+  rideStartTime: null,
+  highSpeedStartMs: null,   // epoch when speed first exceeded 10 mph
+  lowSpeedStartMs: null,    // epoch when speed dropped below 10 mph
   onStatusChange: null,
+  gpsLog: [],               // debug log of every point
 };
 
 export function setStatusCallback(cb) {
   state.onStatusChange = cb;
 }
 
-function emitStatus(extra = {}) {
+function emit(extra = {}) {
   if (state.onStatusChange) {
     state.onStatusChange({
       status: state.status,
       miles: (state.totalMeters / 1609.344).toFixed(1),
       meters: state.totalMeters,
-      duration: state.startTime ? Math.floor((Date.now() - state.startTime) / 1000) : 0,
+      duration: state.rideStartTime
+        ? Math.floor((Date.now() - state.rideStartTime) / 1000)
+        : 0,
+      totalPoints: state.gpsLog.length,
       ...extra,
     });
   }
 }
 
-function getSpeedMph(location, previousLocation, previousTime) {
-  // First try the GPS-reported speed
-  const { speed } = location.coords;
-  if (speed !== null && speed !== -1 && speed > 0) {
-    return speed * 2.23694;
-  }
+function clearTimer() {
+  state.highSpeedStartMs = null;
+  state.lowSpeedStartMs = null;
+}
 
-  // Fallback: calculate speed from distance between last two positions
-  if (previousLocation && previousTime) {
+// ─── Speed: prefer GPS, fall back to position delta ────────────
+
+function calcSpeedMph(loc, prevLoc, prevTime) {
+  const s = loc.coords.speed;
+  if (s !== null && s !== -1 && s > 0) return s * 2.23694;
+
+  if (prevLoc && prevTime) {
     const dist = haversineDistance(
-      { latitude: previousLocation.latitude, longitude: previousLocation.longitude },
-      { latitude: location.coords.latitude, longitude: location.coords.longitude }
+      { latitude: prevLoc.latitude, longitude: prevLoc.longitude },
+      { latitude: loc.coords.latitude, longitude: loc.coords.longitude }
     );
-    const timeSec = (Date.now() - previousTime) / 1000;
-    if (timeSec > 0 && dist > 5) {
-      const speedMs = dist / timeSec;
-      return speedMs * 2.23694; // m/s to mph
-    }
+    const dt = (Date.now() - prevTime) / 1000;
+    if (dt > 0 && dist > 3) return (dist / dt) * 2.23694;
   }
-
   return 0;
 }
 
-async function handleLocation(location) {
-  const { latitude, longitude } = location.coords;
-  const now = Date.now();
+// ─── GPS jump filter ───────────────────────────────────────────
 
-  // Get speed using reported GPS or calculated from position change
-  const speedMph = getSpeedMph(location, state.lastLocation, state.lastLocationTime);
-  const currentPos = { latitude, longitude };
+function isGpsJump(newPos, oldPos, sinceMs) {
+  if (!oldPos) return false;
+  const d = haversineDistance(oldPos, newPos);
+  const dt = (Date.now() - sinceMs) / 1000;
+  return d > 100 && dt <= 1.5;   // >100m in ≤1.5 s → spike
+}
+
+// ─── Location handler ──────────────────────────────────────────
+
+async function handleLocation(loc) {
+  const now = Date.now();
+  const { latitude, longitude } = loc.coords;
+  const pos = { latitude, longitude };
+
+  // ── compute speed ──
+  const speedMph = calcSpeedMph(loc, state.lastLocation, state.lastLocationTime);
+  const speedMs = speedMph / 2.23694;
+
+  // ── log every point ──
+  state.gpsLog.push({
+    ts: new Date().toISOString(),
+    lat: latitude,
+    lon: longitude,
+    speed: state.status === 'tracking' ? speedMph.toFixed(1) : speedMph.toFixed(1),
+    cumulativeMiles: (state.totalMeters / 1609.344).toFixed(3),
+  });
+  // Keep last 5000 entries to avoid memory leak
+  if (state.gpsLog.length > 5000) state.gpsLog.splice(0, 1000);
 
   switch (state.status) {
     case 'idle':
-      // Shouldn't get here
       break;
 
+    // ── MONITORING ── waiting for ride to start ──
     case 'monitoring':
+      // Filter GPS jumps during monitoring too
+      if (isGpsJump(pos, state.lastLocation, state.lastLocationTime)) {
+        state.lastLocation = pos;
+        state.lastLocationTime = now;
+        emit({ event: 'gps_jump_filtered' });
+        break;
+      }
+
       if (speedMph > 10) {
-        // Speed above 10mph — start or extend the high-speed window
-        if (!state.highSpeedStartTime) {
-          state.highSpeedStartTime = now;
-        } else if (now - state.highSpeedStartTime >= 15000) {
-          // 15 seconds above 10mph — start tracking!
+        if (!state.highSpeedStartMs) {
+          state.highSpeedStartMs = now;
+        } else if (now - state.highSpeedStartMs >= 15000) {
+          // 15 s above 10 mph → start ride
           state.status = 'tracking';
-          state.startTime = now;
+          state.rideStartTime = now;
           state.totalMeters = 0;
-          state.lastLocation = currentPos;
+          state.lastLocation = pos;
           state.lastLocationTime = now;
-          state.lowSpeedStartTime = null;
-          emitStatus({ event: 'ride_started' });
+          clearTimer();
+          // Switch to high-frequency updates
+          upgradeTrackingFrequency();
+          emit({ event: 'ride_started' });
           return;
         }
       } else {
-        // Speed dropped — reset high-speed timer
-        state.highSpeedStartTime = null;
+        state.highSpeedStartMs = null;
       }
-      // Always update last location for speed calculation
-      state.lastLocation = currentPos;
+      state.lastLocation = pos;
       state.lastLocationTime = now;
-      emitStatus();
+      emit();
       break;
 
+    // ── TRACKING ── ride is active ──
     case 'tracking':
+      // Filter GPS jumps (spikes while riding)
+      if (isGpsJump(pos, state.lastLocation, state.lastLocationTime)) {
+        state.lastLocation = pos;
+        state.lastLocationTime = now;
+        emit({ event: 'gps_jump_filtered' });
+        break;
+      }
+
+      // Accumulate distance from previous valid point
+      if (state.lastLocation) {
+        const dist = haversineDistance(state.lastLocation, pos);
+        if (dist > 3) state.totalMeters += dist;   // filter static noise
+      }
+      state.lastLocation = pos;
+      state.lastLocationTime = now;
+
+      // Stop timer logic
       if (speedMph > 10) {
-        // Still riding — accumulate distance
-        if (state.lastLocation) {
-          const dist = haversineDistance(state.lastLocation, currentPos);
-          // Only count if more than 5 meters (filter GPS noise)
-          if (dist > 5) {
-            state.totalMeters += dist;
-          }
-        }
-        state.lastLocation = currentPos;
-        state.lastLocationTime = now;
-        state.lowSpeedStartTime = null; // reset low-speed timer
-        emitStatus();
+        state.lowSpeedStartMs = null;
       } else {
-        // Speed dropped below 10mph
-        state.lastLocation = currentPos;
-        state.lastLocationTime = now;
-        if (!state.lowSpeedStartTime) {
-          state.lowSpeedStartTime = now;
-        } else if (now - state.lowSpeedStartTime >= 300000) {
-          // 5 minutes below 10mph — stop tracking
-          stopTracking();
+        if (!state.lowSpeedStartMs) {
+          state.lowSpeedStartMs = now;
+        } else if (now - state.lowSpeedStartMs >= 300000) {
+          // 5 minutes below 10 mph → end ride
+          stopTracking('timeout');
           return;
         }
-        emitStatus();
       }
+      emit();
       break;
   }
 }
 
-export async function startMonitoring() {
-  const { status } = await Location.requestForegroundPermissionsAsync();
-  if (status !== 'granted') {
-    throw new Error('Location permission required');
-  }
+// ── Upgrade to 1‑2 s updates once ride starts ──
+async function upgradeTrackingFrequency() {
+  if (state.watchSubscription) state.watchSubscription.remove();
 
-  // Reset state
-  state.status = 'monitoring';
-  state.totalMeters = 0;
-  state.startTime = null;
-  state.lastLocation = null;
-  state.lastLocationTime = null;
-  state.highSpeedStartTime = null;
-  state.lowSpeedStartTime = null;
-
-  // Start watching position
   state.watchSubscription = await Location.watchPositionAsync(
     {
-      accuracy: Location.Accuracy.BestForNavigation,
-      timeInterval: 5000,   // every 5 seconds
-      distanceInterval: 5,   // or every 5 meters
+      accuracy: Location.Accuracy.Highest,
+      timeInterval: 1000,
+      distanceInterval: 0,        // every position
+      activityType: Location.ActivityType.Fitness,
+      showsBackgroundLocationIndicator: true,
     },
-    handleLocation
+    handleLocation,
   );
-
-  emitStatus({ event: 'monitoring' });
 }
 
-export function stopTracking() {
+// ─── Public API ─────────────────────────────────────────────────
+
+export async function startMonitoring() {
+  // Request permissions
+  const fg = await Location.requestForegroundPermissionsAsync();
+  if (fg.status !== 'granted') throw new Error('Location permission required');
+
+  // Also request background for screen-off tracking
+  const bg = await Location.requestBackgroundPermissionsAsync();
+  if (bg.status !== 'granted') {
+    // non-fatal — tracking continues while app is visible
+  }
+
+  const { status: services } = await Location.getProviderStatusAsync();
+  if (!services.gpsAvailable && !services.networkAvailable) {
+    throw new Error('No location provider available');
+  }
+
+  // Reset
+  state.status = 'monitoring';
+  state.totalMeters = 0;
+  state.rideStartTime = null;
+  state.lastLocation = null;
+  state.lastLocationTime = null;
+  clearTimer();
+  state.gpsLog = [];
+
+  // Start with battery-friendly 5 s interval
+  state.watchSubscription = await Location.watchPositionAsync(
+    {
+      accuracy: Location.Accuracy.High,
+      timeInterval: 5000,
+      distanceInterval: 5,
+      activityType: Location.ActivityType.Fitness,
+    },
+    handleLocation,
+  );
+
+  emit({ event: 'monitoring' });
+}
+
+export function stopTracking(reason) {
   const totalMiles = state.totalMeters / 1609.344;
 
-  // Unsubscribe from location updates
   if (state.watchSubscription) {
     state.watchSubscription.remove();
     state.watchSubscription = null;
   }
 
   const hadRide = state.status === 'tracking' && totalMiles > 0.1;
-
   state.status = 'idle';
   state.lastLocation = null;
   state.lastLocationTime = null;
-  state.highSpeedStartTime = null;
-  state.lowSpeedStartTime = null;
+  clearTimer();
 
   if (hadRide) {
-    // Save pending ride
     savePendingRide(totalMiles);
-    emitStatus({ event: 'ride_ended', miles: totalMiles.toFixed(1) });
+    emit({ event: 'ride_ended', miles: totalMiles.toFixed(1), reason });
   } else {
-    emitStatus({ event: 'stopped' });
+    emit({ event: 'stopped', reason });
   }
 }
 
@@ -198,11 +260,18 @@ export function getStatus() {
   return {
     status: state.status,
     miles: (state.totalMeters / 1609.344).toFixed(1),
-    duration: state.startTime ? Math.floor((Date.now() - state.startTime) / 1000) : 0,
+    duration: state.rideStartTime
+      ? Math.floor((Date.now() - state.rideStartTime) / 1000)
+      : 0,
+    totalPoints: state.gpsLog.length,
   };
 }
 
-// --- Pending rides stored in AsyncStorage ---
+export function getGpsLog() {
+  return [...state.gpsLog];
+}
+
+// ─── Pending rides ──────────────────────────────────────────────
 
 export async function savePendingRide(miles) {
   const existing = await loadPendingRides();
@@ -226,8 +295,10 @@ export async function loadPendingRides() {
 
 export async function clearPendingRide(id) {
   const rides = await loadPendingRides();
-  const filtered = rides.filter((r) => r.id !== id);
-  await AsyncStorage.setItem(PENDING_RIDE_KEY, JSON.stringify(filtered));
+  await AsyncStorage.setItem(
+    PENDING_RIDE_KEY,
+    JSON.stringify(rides.filter((r) => r.id !== id)),
+  );
 }
 
 export async function clearAllPendingRides() {
