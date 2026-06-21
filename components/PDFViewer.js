@@ -136,9 +136,7 @@ body{background:#525659;font-family:sans-serif;overflow-x:hidden}
 
 <script>
 ${pdfjsCode}
-(function(){
-var blob = new Blob([${JSON.stringify(workerCode)}], {type:'application/javascript'});
-pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+
 
 var pdfDoc=null, curPage=1;
 var viewer=document.getElementById('viewer');
@@ -148,7 +146,7 @@ var ctrl=document.getElementById('controls');
 pdfjsLib.getDocument("data:application/pdf;base64,${pdfData}").promise.then(function(pdf){
   pdfDoc=pdf;
   ctrl.style.display='flex';
-  renderAll(pdf.numPages).then(function(){
+  renderAll(pdf.numPages).then
     window.ReactNativeWebView.postMessage(JSON.stringify({type:'loaded',totalPages:pdf.numPages}));
   });
 }).catch(function(e){
