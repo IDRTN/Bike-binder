@@ -4,7 +4,7 @@ import {
   Dimensions,
 } from 'react-native';
 import Pdf from 'react-native-pdf';
-import * as FileSystem from 'expo-file-system/legacy';
+import ReactNativeBlobUtil from 'react-native-blob-util';
 import { COLORS } from '../theme';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -17,7 +17,6 @@ export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
   const [error, setError] = useState(null);
   const [pdfSource, setPdfSource] = useState(null);
 
-  // Prepare the PDF source when the modal opens
   React.useEffect(() => {
     if (visible && fileUri) {
       prepareSource();
@@ -34,27 +33,60 @@ export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
       setLoading(true);
       setError(null);
 
+      console.log('[PDFViewer] Received fileUri:', fileUri);
+
       // Web URLs
       if (fileUri.startsWith('http://') || fileUri.startsWith('https://')) {
+        console.log('[PDFViewer] Using web URL directly');
         setPdfSource({ uri: fileUri, cache: true });
         setLoading(false);
         return;
       }
 
-      // Ensure file exists at the stored permanent path
-      const info = await FileSystem.getInfoAsync(fileUri);
-      if (!info.exists) {
-        setError('File not found. It may have been moved or deleted.');
+      // Determine the correct file path
+      let finalPath = fileUri;
+
+      // If it's a content:// URI (shouldn't happen if stored properly, but handle it)
+      if (fileUri.startsWith('content://')) {
+        console.log('[PDFViewer] ERROR: content:// URI detected — file was not copied to permanent storage');
+        setError('File was not saved properly. Please upload again.');
         setLoading(false);
         return;
       }
 
-      // react-native-pdf needs a file:// URI
-      // The file is already stored in permanent storage
-      setPdfSource({ uri: fileUri, cache: true });
+      // If it's a file:// URI, extract the path
+      if (fileUri.startsWith('file://')) {
+        finalPath = fileUri.replace(/^file:\/\//, '');
+      }
+
+      // Verify the permanent file exists
+      const exists = await ReactNativeBlobUtil.fs.exists(finalPath);
+      console.log('[PDFViewer] Permanent file path:', finalPath);
+      console.log('[PDFViewer] File exists:', exists);
+
+      if (!exists) {
+        // Try the document directory
+        const docDirPath = `${ReactNativeBlobUtil.fs.dirs.DocumentDir}/manuals/${fileName || 'manual.pdf'}`;
+        const docExists = await ReactNativeBlobUtil.fs.exists(docDirPath);
+        console.log('[PDFViewer] Fallback path:', docDirPath, 'exists:', docExists);
+        if (docExists) {
+          finalPath = docDirPath;
+        } else {
+          setError('File not found in storage. It may have been deleted.');
+          setLoading(false);
+          return;
+        }
+      }
+
+      // react-native-pdf expects a plain absolute path for local files
+      // OR use file:// scheme
+      const source = { uri: `file://${finalPath}`, cache: true };
+      console.log('[PDFViewer] URI passed to react-native-pdf:', source.uri);
+
+      setPdfSource(source);
       setLoading(false);
     } catch (e) {
-      console.warn('PDF prepare error:', e);
+      console.warn('[PDFViewer] Error:', e);
       setError(e.message || 'Could not open the PDF.');
       setLoading(false);
     }
@@ -71,20 +103,16 @@ export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={s.container}>
-        {/* Header */}
         <View style={s.header}>
           <TouchableOpacity onPress={onClose} style={s.closeBtn}>
             <Text style={s.closeText}>← Back</Text>
           </TouchableOpacity>
           <Text style={s.title} numberOfLines={1}>{fileName || 'PDF Viewer'}</Text>
           <View style={{ width: 60, alignItems: 'flex-end' }}>
-            {totalPages > 0 && (
-              <Text style={s.pageCount}>{currentPage}/{totalPages}</Text>
-            )}
+            {totalPages > 0 && <Text style={s.pageCount}>{currentPage}/{totalPages}</Text>}
           </View>
         </View>
 
-        {/* Controls */}
         {totalPages > 0 && (
           <View style={s.controls}>
             <TouchableOpacity
@@ -94,9 +122,7 @@ export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
             >
               <Text style={s.ctrlText}>◀</Text>
             </TouchableOpacity>
-
             <Text style={s.pageLabel}>Page {currentPage} of {totalPages}</Text>
-
             <TouchableOpacity
               onPress={() => goToPage(currentPage + 1)}
               disabled={currentPage >= totalPages}
@@ -107,7 +133,6 @@ export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
           </View>
         )}
 
-        {/* Content */}
         <View style={s.content}>
           {loading ? (
             <View style={s.center}>
@@ -132,14 +157,15 @@ export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
               enablePaging={true}
               horizontal={false}
               spacing={10}
-              fitPolicy={0} // fit width
+              fitPolicy={0}
               onLoadComplete={(total) => {
+                console.log('[PDFViewer] Loaded', total, 'pages');
                 setTotalPages(total);
                 setLoading(false);
               }}
               onPageChanged={(page) => setCurrentPage(page)}
               onError={(e) => {
-                console.warn('PDF render error:', e);
+                console.warn('[PDFViewer] render error:', e);
                 setError(e.message || 'Failed to render PDF.');
                 setLoading(false);
               }}

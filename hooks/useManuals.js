@@ -1,58 +1,89 @@
 import { useState, useCallback } from 'react';
 import { Alert } from 'react-native';
 import { updateMotorcycle } from '../storage';
-import { pickPDF, pickImage, deleteFile } from '../utils/pdfStorage';
+import { pickAndStorePDF, pickAndStoreImage, deleteFile } from '../utils/pdfStorage';
 
+/**
+ * Hook for managing motorcycle manuals.
+ * Ensures all files are copied to permanent storage before saving metadata.
+ * Never stores content:// or temp URIs.
+ */
 export default function useManuals(motorcycle, onUpdate) {
   const [showForm, setShowForm] = useState(false);
   const [search, setSearch] = useState('');
   const [formData, setFormData] = useState({
-    id: null, title: '', fileUri: null, fileName: '',
-    chapter: '', section: '', page: '',
+    id: null,
+    title: '',
+    filePath: null,   // ← permanent file path from react-native-blob-util
+    fileName: '',
+    chapter: '',
+    section: '',
+    page: '',
   });
   const [saving, setSaving] = useState(false);
 
   const resetForm = useCallback(() => {
-    setFormData({ id: null, title: '', fileUri: null, fileName: '', chapter: '', section: '', page: '' });
+    setFormData({ id: null, title: '', filePath: null, fileName: '', chapter: '', section: '', page: '' });
   }, []);
 
   const openAddForm = useCallback(() => { resetForm(); setShowForm(true); }, [resetForm]);
 
   const openEditForm = useCallback((m) => {
-    setFormData({ id: m.id, title: m.title || '', fileUri: m.fileUri || null, fileName: m.fileName || '', chapter: m.chapter || '', section: m.section || '', page: m.page || '' });
+    setFormData({
+      id: m.id, title: m.title || '', filePath: m.filePath || m.fileUri || null,
+      fileName: m.fileName || '', chapter: m.chapter || '',
+      section: m.section || '', page: m.page || '',
+    });
     setShowForm(true);
   }, []);
 
   const closeForm = useCallback(() => { setShowForm(false); resetForm(); }, [resetForm]);
 
   const handlePickPDF = useCallback(async () => {
-    const r = await pickPDF();
-    if (r) setFormData(p => ({ ...p, fileUri: r.uri, fileName: r.name }));
+    const result = await pickAndStorePDF();
+    if (result) {
+      console.log('[useManuals] PDF picked and stored -> path:', result.path);
+      setFormData(p => ({ ...p, filePath: result.path, fileName: result.name }));
+    }
   }, []);
 
   const handlePickImage = useCallback(async () => {
-    const r = await pickImage();
-    if (r) setFormData(p => ({ ...p, fileUri: r.uri, fileName: r.name }));
+    const result = await pickAndStoreImage();
+    if (result) {
+      console.log('[useManuals] Image picked and stored -> path:', result.path);
+      setFormData(p => ({ ...p, filePath: result.path, fileName: result.name }));
+    }
   }, []);
 
   const handleRemoveFile = useCallback(() => {
-    setFormData(p => ({ ...p, fileUri: null, fileName: '' }));
+    setFormData(p => ({ ...p, filePath: null, fileName: '' }));
   }, []);
 
   const handleSave = useCallback(async () => {
     if (!formData.title.trim()) { Alert.alert('Missing Info', 'Enter a title.'); return; }
-    if (!formData.fileUri) { Alert.alert('Missing Info', 'Upload a file.'); return; }
+    if (!formData.filePath) { Alert.alert('Missing Info', 'Upload a PDF or image.'); return; }
+
     setSaving(true);
     try {
       const updated = { ...motorcycle };
       const manuals = [...(updated.manuals || [])];
-      const entry = { title: formData.title.trim(), fileUri: formData.fileUri, fileName: formData.fileName, chapter: formData.chapter.trim(), section: formData.section.trim(), page: formData.page.trim() };
+      const entry = {
+        title: formData.title.trim(),
+        filePath: formData.filePath,           // ← permanent absolute path
+        fileUri: formData.filePath,             // ← kept for backward compatibility
+        fileName: formData.fileName,
+        chapter: formData.chapter.trim(),
+        section: formData.section.trim(),
+        page: formData.page.trim(),
+      };
+
       if (formData.id) {
         const idx = manuals.findIndex(m => m.id === formData.id);
         if (idx !== -1) manuals[idx] = { ...manuals[idx], ...entry };
       } else {
         manuals.push({ id: Date.now().toString(), ...entry });
       }
+
       updated.manuals = manuals;
       await updateMotorcycle(updated);
       onUpdate(updated);
@@ -68,21 +99,29 @@ export default function useManuals(motorcycle, onUpdate) {
     const manual = (motorcycle.manuals || []).find(m => m.id === id);
     Alert.alert('Remove Manual', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Remove', style: 'destructive', onPress: async () => {
-        try {
-          if (manual?.fileUri) await deleteFile(manual.fileUri);
-          const updated = { ...motorcycle };
-          updated.manuals = (updated.manuals || []).filter(m => m.id !== id);
-          await updateMotorcycle(updated);
-          onUpdate(updated);
-        } catch (err) { Alert.alert('Error', err.message); }
-      }},
+      {
+        text: 'Remove', style: 'destructive', onPress: async () => {
+          try {
+            // Delete the permanent file
+            const fileToDelete = manual?.filePath || manual?.fileUri;
+            if (fileToDelete) await deleteFile(fileToDelete);
+
+            const updated = { ...motorcycle };
+            updated.manuals = (updated.manuals || []).filter(m => m.id !== id);
+            await updateMotorcycle(updated);
+            onUpdate(updated);
+          } catch (err) { Alert.alert('Error', err.message); }
+        },
+      },
     ]);
   }, [motorcycle, onUpdate]);
 
   const manuals = motorcycle.manuals || [];
   const filtered = search
-    ? manuals.filter(m => m.title.toLowerCase().includes(search.toLowerCase()) || (m.fileName && m.fileName.toLowerCase().includes(search.toLowerCase())))
+    ? manuals.filter(m =>
+        m.title.toLowerCase().includes(search.toLowerCase()) ||
+        (m.fileName && m.fileName.toLowerCase().includes(search.toLowerCase()))
+      )
     : manuals;
 
   const setField = useCallback((f, v) => setFormData(p => ({ ...p, [f]: v })), []);

@@ -1,88 +1,183 @@
-import * as FileSystem from 'expo-file-system/legacy';
+import ReactNativeBlobUtil from 'react-native-blob-util';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { Platform, Alert } from 'react-native';
+import { Alert } from 'react-native';
 
 // ─── Constants ──────────────────────────────────────────────────
 
-// Permanent storage directory (survives app restarts)
-const PDF_STORAGE_DIR = FileSystem.documentDirectory + 'manuals/';
+const MANUALS_DIR = 'manuals/';
+const DOCUMENT_DIR = ReactNativeBlobUtil.fs.dirs.DocumentDir;
+const MANUALS_PATH = `${DOCUMENT_DIR}/${MANUALS_DIR}`;
 
-// Supported file types
-const PDF_MIME = 'application/pdf';
-const IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'];
+// ─── Debug logging ──────────────────────────────────────────────
+
+function log(...args) {
+  console.log('[PDFStorage]', ...args);
+}
 
 // ─── Permission helpers ─────────────────────────────────────────
 
 export async function requestMediaPermission() {
   const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (status !== 'granted') {
-    Alert.alert(
-      'Permission Required',
-      'Bike Binder needs access to your photos to attach images to manuals.'
-    );
+    Alert.alert('Permission Required', 'Access to photos is needed to attach images.');
     return false;
   }
   return true;
 }
 
+// ─── Directory management ───────────────────────────────────────
+
+/**
+ * Ensure the manuals directory exists. Creates it if needed.
+ */
+export async function ensureManualsDir() {
+  const exists = await ReactNativeBlobUtil.fs.exists(MANUALS_PATH);
+  if (!exists) {
+    await ReactNativeBlobUtil.fs.mkdir(MANUALS_PATH);
+    log('Created manuals directory:', MANUALS_PATH);
+  }
+  return MANUALS_PATH;
+}
+
 // ─── File operations ────────────────────────────────────────────
 
 /**
- * Ensure the manuals storage directory exists.
- */
-export async function ensureStorageDir() {
-  await FileSystem.makeDirectoryAsync(PDF_STORAGE_DIR, { intermediates: true });
-}
-
-/**
- * Copy a file from a source URI to permanent app storage.
- * @param {string} sourceUri - The temporary URI from DocumentPicker or ImagePicker.
- * @param {string} fileName - The original file name to preserve.
- * @returns {Promise<string>} The permanent URI of the copied file.
+ * Copy a file to permanent application storage using react-native-blob-util.
+ *
+ * @param {string} sourceUri - The original URI (content:// or file://).
+ * @param {string} fileName  - The file name to save as.
+ * @returns {Promise<string>} The permanent absolute file path.
  */
 export async function copyToPermanentStorage(sourceUri, fileName) {
-  await ensureStorageDir();
-  const dest = PDF_STORAGE_DIR + sanitizeFileName(fileName || `manual_${Date.now()}.pdf`);
-  await FileSystem.copyAsync({ from: sourceUri, to: dest });
-  return dest;
+  await ensureManualsDir();
+  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const destPath = `${MANUALS_PATH}${safeName}`;
+
+  log('Original URI:', sourceUri);
+  log('Copy destination:', destPath);
+
+  // Remove if already exists
+  const exists = await ReactNativeBlobUtil.fs.exists(destPath);
+  if (exists) {
+    await ReactNativeBlobUtil.fs.unlink(destPath);
+    log('Removed existing file at destination');
+  }
+
+  // Copy the file using react-native-blob-util
+  // This handles content:// URIs properly on Android
+  await ReactNativeBlobUtil.fs.cp(sourceUri, destPath);
+
+  // Verify the copy
+  const copiedExists = await ReactNativeBlobUtil.fs.exists(destPath);
+  if (!copiedExists) {
+    throw new Error(`File copy failed — destination does not exist: ${destPath}`);
+  }
+
+  log('Copied successfully to:', destPath);
+  return destPath;  // ⬅ Returns plain absolute path (no file:// prefix)
 }
 
 /**
- * Sanitize a file name to remove path separators and special characters.
+ * Delete a file from permanent storage.
  */
-function sanitizeFileName(name) {
-  return name.replace(/[^a-zA-Z0-9._-]/g, '_');
+export async function deleteFile(filePath) {
+  if (!filePath) return;
+  try {
+    const exists = await ReactNativeBlobUtil.fs.exists(filePath);
+    if (exists) {
+      await ReactNativeBlobUtil.fs.unlink(filePath);
+      log('Deleted:', filePath);
+    }
+  } catch (err) {
+    console.warn('[PDFStorage] Delete failed:', filePath, err);
+  }
 }
 
 /**
- * Pick a PDF document from the device.
- * @returns {Promise<{uri: string, name: string} | null>}
+ * Get the file path suitable for react-native-pdf.
+ * Returns the absolute path without any file:// prefix.
  */
-export async function pickPDF() {
+export async function getLocalFilePath(fileUri) {
+  if (!fileUri) return null;
+
+  // If it's already a plain path (not a URI scheme), use directly
+  if (!fileUri.includes('://')) {
+    return fileUri;
+  }
+
+  // If it's an expo-file-system URI or content:// URI,
+  // check if it was already copied to permanent storage
+  if (fileUri.startsWith('file://')) {
+    // Extract the path from file:// URI
+    const path = fileUri.replace(/^file:\/\//, '');
+    const exists = await ReactNativeBlobUtil.fs.exists(path);
+    if (exists) {
+      log('Using existing file:', path);
+      return path;
+    }
+  }
+
+  // If it's a content:// URI (original DocumentPicker URI), try to copy
+  if (fileUri.startsWith('content://')) {
+    log('Content URI detected — needs copy to permanent storage');
+    const fileName = `manual_${Date.now()}.pdf`;
+    const path = await copyToPermanentStorage(fileUri, fileName);
+    log('Copied content:// URI to permanent storage:', path);
+    return path;
+  }
+
+  // Fallback: try the URI as-is
+  return fileUri;
+}
+
+/**
+ * Check if a URI points to an image.
+ */
+export function isImageFile(uri) {
+  if (!uri) return false;
+  return /\.(png|jpg|jpeg|gif|webp)$/i.test(uri);
+}
+
+/**
+ * Check if a URI points to a PDF.
+ */
+export function isPDFFile(uri) {
+  if (!uri) return false;
+  return /\.pdf$/i.test(uri);
+}
+
+// ─── Pickers ────────────────────────────────────────────────────
+
+/**
+ * Pick a PDF and copy it to permanent storage immediately.
+ * @returns {Promise<{path: string, name: string} | null>}
+ */
+export async function pickAndStorePDF() {
   const result = await DocumentPicker.getDocumentAsync({
-    type: PDF_MIME,
+    type: 'application/pdf',
     copyToCacheDirectory: true,
   });
 
   if (result.canceled || !result.assets?.length) return null;
 
   const asset = result.assets[0];
-  try {
-    const permUri = await copyToPermanentStorage(asset.uri, asset.name);
-    return { uri: permUri, name: asset.name };
-  } catch (err) {
-    // Fallback to temp URI if copy fails
-    console.warn('PDF copy failed, using temp URI:', err);
-    return { uri: asset.uri, name: asset.name };
-  }
+  log('Picker returned URI:', asset.uri);
+  log('Picker returned name:', asset.name);
+
+  // Copy to permanent storage immediately
+  const permPath = await copyToPermanentStorage(asset.uri, asset.name);
+
+  log('Final permanent path for storage:', permPath);
+
+  return { path: permPath, name: asset.name };
 }
 
 /**
- * Pick an image from the device.
- * @returns {Promise<{uri: string, name: string} | null>}
+ * Pick an image and copy it to permanent storage.
+ * @returns {Promise<{path: string, name: string} | null>}
  */
-export async function pickImage() {
+export async function pickAndStoreImage() {
   if (!(await requestMediaPermission())) return null;
 
   const result = await ImagePicker.launchImageLibraryAsync({
@@ -95,69 +190,20 @@ export async function pickImage() {
   const asset = result.assets[0];
   const fileName = asset.fileName || `photo_${Date.now()}.jpg`;
 
-  try {
-    const permUri = await copyToPermanentStorage(asset.uri, fileName);
-    return { uri: permUri, name: fileName };
-  } catch (err) {
-    console.warn('Image copy failed, using temp URI:', err);
-    return { uri: asset.uri, name: fileName };
-  }
+  log('Image picker returned URI:', asset.uri);
+
+  const permPath = await copyToPermanentStorage(asset.uri, fileName);
+
+  return { path: permPath, name: fileName };
 }
 
 /**
- * Delete a PDF file from permanent storage.
- * @param {string} fileUri - The URI of the file to delete.
- */
-export async function deleteFile(fileUri) {
-  if (!fileUri) return;
-  try {
-    const info = await FileSystem.getInfoAsync(fileUri);
-    if (info.exists) {
-      await FileSystem.deleteAsync(fileUri, { idempotent: true });
-    }
-  } catch (err) {
-    console.warn('Failed to delete file:', fileUri, err);
-  }
-}
-
-/**
- * Get a content:// URI suitable for WebView access.
- * @param {string} fileUri - The file:// URI.
- * @returns {Promise<string>} A content:// URI.
- */
-export async function getContentUri(fileUri) {
-  try {
-    return await FileSystem.getContentUriAsync(fileUri);
-  } catch {
-    // Fallback to original URI
-    return fileUri;
-  }
-}
-
-/**
- * Check if a URI points to an image file.
- */
-export function isImageFile(uri) {
-  if (!uri) return false;
-  return /\.(png|jpg|jpeg|gif|webp)$/i.test(uri);
-}
-
-/**
- * Check if a URI points to a PDF file.
- */
-export function isPDFFile(uri) {
-  if (!uri) return false;
-  return /\.pdf$/i.test(uri);
-}
-
-/**
- * List all stored manual files for debugging.
+ * List all files in the manuals directory.
  */
 export async function listStoredFiles() {
   try {
-    await ensureStorageDir();
-    const files = await FileSystem.readDirectoryAsync(PDF_STORAGE_DIR);
-    return files;
+    await ensureManualsDir();
+    return await ReactNativeBlobUtil.fs.ls(MANUALS_PATH);
   } catch {
     return [];
   }

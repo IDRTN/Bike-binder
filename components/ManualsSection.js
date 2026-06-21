@@ -21,8 +21,8 @@ export default function ManualsSection({ motorcycle, onUpdate }) {
   const [imgUri, setImgUri] = React.useState(null);
 
   const openFile = (item) => {
-    if (isImageFile(item.fileUri)) {
-      setImgUri(item.fileUri);
+    if (isImageFile(item.filePath || item.fileUri)) {
+      setImgUri(item.filePath || item.fileUri);
       setImgVisible(true);
     } else {
       setPdfFile(item);
@@ -31,14 +31,14 @@ export default function ManualsSection({ motorcycle, onUpdate }) {
   };
 
   const renderItem = ({ item }) => {
-    const isImage = isImageFile(item.fileUri);
+    const isImage = isImageFile(item.filePath || item.fileUri);
     return (
       <View style={styles.item}>
         <TouchableOpacity onPress={() => openFile(item)} onLongPress={() => handleDelete(item.id)}>
           <View style={styles.itemRow}>
             {isImage ? (
               <TouchableOpacity onPress={() => { setImgUri(item.fileUri); setImgVisible(true); }}>
-                <Image source={{ uri: item.fileUri }} style={styles.thumb} />
+                <Image source={{ uri: item.filePath || item.fileUri }} style={styles.thumb} />
               </TouchableOpacity>
             ) : (
               <View style={styles.fileIcon}>
@@ -102,18 +102,18 @@ export default function ManualsSection({ motorcycle, onUpdate }) {
             <TouchableOpacity style={styles.imageBtn} onPress={handlePickImage}>
               <Text style={styles.imageBtnText}>🖼 Pick Photo</Text>
             </TouchableOpacity>
-            {formData.fileUri && (
+            {formData.filePath && (
               <TouchableOpacity style={styles.imageBtn} onPress={handleRemoveFile}>
                 <Text style={styles.imageBtnText}>🗑 Remove</Text>
               </TouchableOpacity>
             )}
           </View>
 
-          {formData.fileUri && (
+          {formData.filePath && (
             <View style={styles.filePreview}>
               <Text style={styles.fileLabel}>Selected: {formData.fileName}</Text>
-              {isImageFile(formData.fileUri) && (
-                <Image source={{ uri: formData.fileUri }} style={styles.preview} />
+              {isImageFile(formData.filePath) && (
+                <Image source={{ uri: formData.filePath }} style={styles.preview} />
               )}
             </View>
           )}
@@ -158,7 +158,7 @@ export default function ManualsSection({ motorcycle, onUpdate }) {
       {/* PDF Viewer */}
       <PDFViewer
         visible={pdfVisible}
-        fileUri={pdfFile?.fileUri}
+        fileUri={pdfFile?.filePath || pdfFile?.fileUri}
         fileName={pdfFile?.fileName || pdfFile?.title}
         onClose={() => setPdfVisible(false)}
       />
