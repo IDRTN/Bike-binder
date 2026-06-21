@@ -1,4 +1,4 @@
-name: Build & Release APK
+name: Build Android APK
 
 on:
   push:
@@ -32,20 +32,41 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Decode release keystore (if available)
+        run: |
+          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/release.keystore
+            echo "Keystore decoded"
+          else
+            echo "No keystore secret set — skipping release signing"
+          fi
+
       - name: Prebuild native project
         run: npx expo prebuild --platform android --clean
 
       - name: Accept SDK licenses
         run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1
 
-      - name: Build debug APK
+      - name: Build debug APK (unsigned)
         working-directory: ./android
         run: ./gradlew assembleDebug --no-daemon
+
+      - name: Build release APK (signed)
+        working-directory: ./android
+        run: |
+          if [ -f release.keystore ]; then
+            ./gradlew assembleRelease --no-daemon \
+              -PANDROID_KEYSTORE_FILE=release.keystore \
+              -PANDROID_KEYSTORE_PASSWORD=${{ secrets.ANDROID_KEYSTORE_PASSWORD }} \
+              -PANDROID_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }} \
+              -PANDROID_KEY_PASSWORD=${{ secrets.ANDROID_KEY_PASSWORD }}
+          else
+            echo "Skipping release build (no keystore)"
+          fi
 
       - name: Get version
         run: |
           echo "VERSION=v$(node -p "require('./app.json').expo.version")" >> $GITHUB_ENV
-          echo "TIMESTAMP=$(date +%s)" >> $GITHUB_ENV
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -54,11 +75,7 @@ jobs:
           name: Bike Binder ${{ env.VERSION }}
           body: |
             Latest build of Bike Binder.
-            
-            **Fixes in this release:**
-            - Ride tracker now calculates speed from GPS position changes (fixes incorrect mileage)
-            - PDF manuals open with your device's PDF viewer
-            - Parts section now includes Miles, Price, Make, Model, Specs, Notes fields
-            - Updated app icon
-          files: android/app/build/outputs/apk/debug/*.apk
+          files: |
+            android/app/build/outputs/apk/debug/*.apk
+            android/app/build/outputs/apk/release/*.apk
           fail_on_unmatched_files: false
