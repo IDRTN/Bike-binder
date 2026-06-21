@@ -1,227 +1,61 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  FlatList,
-  Image,
-  Alert,
+  View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList, Image, Alert,
 } from 'react-native';
-import * as DocumentPicker from 'expo-document-picker';
-import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system/legacy';
-import { updateMotorcycle } from '../storage';
-import ImageViewer from './ImageViewer';
+import useManuals from '../hooks/useManuals';
+import { isImageFile } from '../utils/pdfStorage';
 import PDFViewer from './PDFViewer';
+import ImageViewer from './ImageViewer';
 import { COLORS } from '../theme';
 
-const MANUALS_DIR = FileSystem.documentDirectory + 'manuals/';
-
-async function copyToPermanentStorage(fileUri, fileName) {
-  await FileSystem.makeDirectoryAsync(MANUALS_DIR, { intermediates: true });
-  const dest = MANUALS_DIR + (fileName || 'manual_' + Date.now());
-  await FileSystem.copyAsync({ from: fileUri, to: dest });
-  return dest;
-}
-
 export default function ManualsSection({ motorcycle, onUpdate }) {
-  const [showForm, setShowForm] = useState(false);
-  const [search, setSearch] = useState('');
-  const [title, setTitle] = useState('');
-  const [fileUri, setFileUri] = useState(null);
-  const [fileName, setFileName] = useState('');
-  const [chapter, setChapter] = useState('');
-  const [section, setSection] = useState('');
-  const [page, setPage] = useState('');
-  const [adding, setAdding] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [viewerVisible, setViewerVisible] = useState(false);
-  const [viewerImage, setViewerImage] = useState(null);
-  const [pdfViewerVisible, setPdfViewerVisible] = useState(false);
-  const [pdfFile, setPdfFile] = useState(null);
+  const {
+    showForm, search, formData, saving, filtered,
+    setSearch, setField, openAddForm, openEditForm, closeForm,
+    handlePickPDF, handlePickImage, handleRemoveFile, handleSave, handleDelete,
+  } = useManuals(motorcycle, onUpdate);
 
-  const openViewer = (uri) => {
-    setViewerImage(uri);
-    setViewerVisible(true);
-  };
-
-  const resetForm = () => {
-    setTitle('');
-    setFileUri(null);
-    setFileName('');
-    setChapter('');
-    setSection('');
-    setPage('');
-    setEditingId(null);
-  };
-
-  const openAdd = () => { resetForm(); setShowForm(true); };
-
-  const openEdit = (manual) => {
-    setTitle(manual.title);
-    setFileUri(manual.fileUri || null);
-    setFileName(manual.fileName || '');
-    setChapter(manual.chapter || '');
-    setSection(manual.section || '');
-    setPage(manual.page || '');
-    setEditingId(manual.id);
-    setShowForm(true);
-  };
-
-  const pickDocument = async () => {
-    const result = await DocumentPicker.getDocumentAsync({
-      type: ['application/pdf', 'image/*'],
-      copyToCacheDirectory: true,
-    });
-    if (!result.canceled && result.assets?.length > 0) {
-      try {
-        // Copy to permanent storage
-        const permUri = await copyToPermanentStorage(
-          result.assets[0].uri,
-          result.assets[0].name
-        );
-        setFileUri(permUri);
-        setFileName(result.assets[0].name);
-      } catch (e) {
-        // Fallback to temp URI if copy fails
-        setFileUri(result.assets[0].uri);
-        setFileName(result.assets[0].name);
-      }
-    }
-  };
-
-  const pickPhoto = async () => {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert('Permission needed', 'Camera roll access is required.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      quality: 0.7,
-      allowsEditing: true,
-    });
-    if (!result.canceled) {
-      try {
-        const permUri = await copyToPermanentStorage(
-          result.assets[0].uri,
-          result.assets[0].fileName || 'photo.jpg'
-        );
-        setFileUri(permUri);
-        setFileName(result.assets[0].fileName || 'photo.jpg');
-      } catch (e) {
-        setFileUri(result.assets[0].uri);
-        setFileName(result.assets[0].fileName || 'photo.jpg');
-      }
-    }
-  };
-
-  const handleSave = async () => {
-    if (!title.trim() || !fileUri) {
-      Alert.alert('Missing Info', 'Please enter a title and upload a file.');
-      return;
-    }
-    setAdding(true);
-    let updated = { ...motorcycle };
-    const manuals = [...(updated.manuals || [])];
-    const entry = {
-      title: title.trim(),
-      fileUri,
-      fileName,
-      chapter: chapter.trim(),
-      section: section.trim(),
-      page: page.trim(),
-    };
-    if (editingId) {
-      const idx = manuals.findIndex((m) => m.id === editingId);
-      if (idx !== -1) manuals[idx] = { ...manuals[idx], ...entry };
-    } else {
-      manuals.push({ id: Date.now().toString(), ...entry });
-    }
-    updated.manuals = manuals;
-    await updateMotorcycle(updated);
-    onUpdate(updated);
-    resetForm();
-    setShowForm(false);
-    setAdding(false);
-  };
-
-  const removeManual = (id) => {
-    Alert.alert('Remove Manual', 'Are you sure?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove',
-        style: 'destructive',
-        onPress: async () => {
-          const updated = { ...motorcycle };
-          const manual = (updated.manuals || []).find((m) => m.id === id);
-          updated.manuals = updated.manuals.filter((m) => m.id !== id);
-          await updateMotorcycle(updated);
-          onUpdate(updated);
-        },
-      },
-    ]);
-  };
-
-  const manuals = motorcycle.manuals || [];
-  const filtered = search
-    ? manuals.filter(
-        (m) =>
-          m.title.toLowerCase().includes(search.toLowerCase()) ||
-          (m.fileName &&
-            m.fileName.toLowerCase().includes(search.toLowerCase()))
-      )
-    : manuals;
+  const [pdfFile, setPdfFile] = React.useState(null);
+  const [pdfVisible, setPdfVisible] = React.useState(false);
+  const [imgVisible, setImgVisible] = React.useState(false);
+  const [imgUri, setImgUri] = React.useState(null);
 
   const openFile = (item) => {
-    const isImage = item.fileUri?.match(/\.(png|jpg|jpeg|gif|webp)$/i);
-    if (isImage) {
-      openViewer(item.fileUri);
-      return;
+    if (isImageFile(item.fileUri)) {
+      setImgUri(item.fileUri);
+      setImgVisible(true);
+    } else {
+      setPdfFile(item);
+      setPdfVisible(true);
     }
-    setPdfFile(item);
-    setPdfViewerVisible(true);
   };
 
-  const renderManual = ({ item }) => {
-    const isImage = item.fileUri?.match(/\.(png|jpg|jpeg|gif|webp)$/i);
+  const renderItem = ({ item }) => {
+    const isImage = isImageFile(item.fileUri);
     return (
-      <View style={[styles.item, { position: 'relative' }]}>
-        <TouchableOpacity onPress={() => openFile(item)} onLongPress={() => removeManual(item.id)}>
+      <View style={styles.item}>
+        <TouchableOpacity onPress={() => openFile(item)} onLongPress={() => handleDelete(item.id)}>
           <View style={styles.itemRow}>
             {isImage ? (
-              <TouchableOpacity onPress={() => openViewer(item.fileUri)}>
+              <TouchableOpacity onPress={() => { setImgUri(item.fileUri); setImgVisible(true); }}>
                 <Image source={{ uri: item.fileUri }} style={styles.thumb} />
               </TouchableOpacity>
             ) : (
-              <TouchableOpacity onPress={() => openFile(item)}>
-                <View style={styles.fileIcon}>
-                  <Text style={styles.fileIconText}>📄</Text>
-                </View>
-              </TouchableOpacity>
+              <View style={styles.fileIcon}>
+                <Text style={styles.fileIconText}>📄</Text>
+              </View>
             )}
             <View style={styles.itemInfo}>
               <Text style={styles.itemTitle}>{item.title}</Text>
-              {item.fileName && (
-                <Text style={styles.itemSub}>{item.fileName}</Text>
-              )}
+              {item.fileName && <Text style={styles.itemSub}>{item.fileName}</Text>}
               {(item.chapter || item.section || item.page) && (
                 <Text style={styles.refText}>
-                  {[item.chapter, item.section, item.page]
-                    .filter(Boolean)
-                    .join(' • ')}
+                  {[item.chapter, item.section, item.page].filter(Boolean).join(' • ')}
                 </Text>
               )}
             </View>
             <Text style={styles.editIcon}>✎</Text>
           </View>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.deleteIcon}
-          onPress={() => removeManual(item.id)}
-        >
-          <Text style={styles.deleteIconText}>✕</Text>
         </TouchableOpacity>
       </View>
     );
@@ -229,18 +63,16 @@ export default function ManualsSection({ motorcycle, onUpdate }) {
 
   return (
     <View style={styles.container}>
+      {/* Header */}
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Manuals ({manuals.length})</Text>
-        <TouchableOpacity
-          onPress={() => (showForm ? setShowForm(false) : openAdd())}
-        >
-          <Text style={styles.addBtn}>
-            {showForm ? 'Cancel' : '+ Add Manual'}
-          </Text>
+        <Text style={styles.sectionTitle}>Manuals ({filtered.length})</Text>
+        <TouchableOpacity onPress={() => (showForm ? closeForm() : openAddForm())}>
+          <Text style={styles.addBtn}>{showForm ? 'Cancel' : '+ Add Manual'}</Text>
         </TouchableOpacity>
       </View>
 
-      {manuals.length > 0 && (
+      {/* Search */}
+      {filtered.length > 0 && (
         <TextInput
           style={styles.search}
           placeholder="Search manuals..."
@@ -250,217 +82,122 @@ export default function ManualsSection({ motorcycle, onUpdate }) {
         />
       )}
 
+      {/* Form */}
       {showForm && (
         <View style={styles.form}>
-          <Text style={styles.formTitle}>
-            {editingId ? 'Edit Manual' : 'New Manual'}
-          </Text>
+          <Text style={styles.formTitle}>{formData.id ? 'Edit Manual' : 'New Manual'}</Text>
+
           <TextInput
             style={styles.input}
             placeholder="Title (e.g. Service Manual)"
             placeholderTextColor={COLORS.textSecondary}
-            value={title}
-            onChangeText={setTitle}
+            value={formData.title}
+            onChangeText={(v) => setField('title', v)}
           />
+
           <View style={styles.imageRow}>
-            <TouchableOpacity style={styles.imageBtn} onPress={pickDocument}>
+            <TouchableOpacity style={styles.imageBtn} onPress={handlePickPDF}>
               <Text style={styles.imageBtnText}>📄 Pick PDF</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.imageBtn} onPress={pickPhoto}>
+            <TouchableOpacity style={styles.imageBtn} onPress={handlePickImage}>
               <Text style={styles.imageBtnText}>🖼 Pick Photo</Text>
             </TouchableOpacity>
-            {fileUri && (
-              <TouchableOpacity
-                style={styles.imageBtn}
-                onPress={() => {
-                  setFileUri(null);
-                  setFileName('');
-                }}
-              >
+            {formData.fileUri && (
+              <TouchableOpacity style={styles.imageBtn} onPress={handleRemoveFile}>
                 <Text style={styles.imageBtnText}>🗑 Remove</Text>
               </TouchableOpacity>
             )}
           </View>
-          {fileUri && (
+
+          {formData.fileUri && (
             <View style={styles.filePreview}>
-              <Text style={styles.fileLabel}>Selected: {fileName}</Text>
-              {fileUri.match(/\.(png|jpg|jpeg|gif|webp)$/i) && (
-                <Image source={{ uri: fileUri }} style={styles.preview} />
+              <Text style={styles.fileLabel}>Selected: {formData.fileName}</Text>
+              {isImageFile(formData.fileUri) && (
+                <Image source={{ uri: formData.fileUri }} style={styles.preview} />
               )}
             </View>
           )}
+
           <Text style={styles.refHeader}>Reference (optional)</Text>
           <View style={styles.refRow}>
             <TextInput
               style={[styles.input, styles.refInput]}
-              placeholder="Chapter"
-              placeholderTextColor={COLORS.textSecondary}
-              value={chapter}
-              onChangeText={setChapter}
+              placeholder="Chapter" placeholderTextColor={COLORS.textSecondary}
+              value={formData.chapter} onChangeText={(v) => setField('chapter', v)}
             />
             <TextInput
               style={[styles.input, styles.refInput]}
-              placeholder="Section"
-              placeholderTextColor={COLORS.textSecondary}
-              value={section}
-              onChangeText={setSection}
+              placeholder="Section" placeholderTextColor={COLORS.textSecondary}
+              value={formData.section} onChangeText={(v) => setField('section', v)}
             />
             <TextInput
               style={[styles.input, styles.refInput]}
-              placeholder="Page"
-              placeholderTextColor={COLORS.textSecondary}
-              value={page}
-              onChangeText={setPage}
+              placeholder="Page" placeholderTextColor={COLORS.textSecondary}
+              value={formData.page} onChangeText={(v) => setField('page', v)}
               keyboardType="number-pad"
             />
           </View>
+
           <TouchableOpacity
-            style={[styles.submitBtn, adding && { opacity: 0.6 }]}
-            onPress={handleSave}
-            disabled={adding}
+            style={[styles.submitBtn, saving && { opacity: 0.6 }]}
+            onPress={handleSave} disabled={saving}
           >
-            <Text style={styles.submitText}>
-              {editingId ? 'Update Manual' : 'Save Manual'}
-            </Text>
+            <Text style={styles.submitText}>{formData.id ? 'Update Manual' : 'Save Manual'}</Text>
           </TouchableOpacity>
         </View>
       )}
 
+      {/* List */}
       {filtered.length > 0 && (
-        <FlatList
-          data={filtered}
-          keyExtractor={(item) => item.id}
-          renderItem={renderManual}
-          scrollEnabled={false}
-        />
+        <FlatList data={filtered} keyExtractor={(i) => i.id} renderItem={renderItem} scrollEnabled={false} />
       )}
       {search && filtered.length === 0 && (
         <Text style={styles.noResults}>No manuals match your search.</Text>
       )}
 
+      {/* PDF Viewer */}
       <PDFViewer
-        visible={pdfViewerVisible}
+        visible={pdfVisible}
         fileUri={pdfFile?.fileUri}
         fileName={pdfFile?.fileName || pdfFile?.title}
-        manualId={pdfFile?.id}
-        onClose={() => setPdfViewerVisible(false)}
+        onClose={() => setPdfVisible(false)}
       />
-      <ImageViewer
-        visible={viewerVisible}
-        imageUri={viewerImage}
-        onClose={() => setViewerVisible(false)}
-      />
+
+      {/* Image Viewer */}
+      <ImageViewer visible={imgVisible} imageUri={imgUri} onClose={() => setImgVisible(false)} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { marginBottom: 24 },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   sectionTitle: { fontSize: 18, fontWeight: '700', color: COLORS.text },
   addBtn: { fontSize: 15, fontWeight: '600', color: COLORS.bronze },
-  search: {
-    backgroundColor: COLORS.card,
-    borderWidth: 1,
-    borderColor: COLORS.cardBorder,
-    borderRadius: 8,
-    padding: 10,
-    fontSize: 14,
-    marginBottom: 12,
-  },
-  form: {
-    backgroundColor: COLORS.card,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: COLORS.cardBorder,
-  },
+  search: { backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.cardBorder, borderRadius: 8, padding: 10, fontSize: 14, marginBottom: 12 },
+  form: { backgroundColor: COLORS.card, borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: COLORS.cardBorder },
   formTitle: { fontSize: 16, fontWeight: '700', color: COLORS.text, marginBottom: 12 },
-  input: {
-    borderWidth: 1,
-    borderColor: COLORS.cardBorder,
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 15,
-    marginBottom: 12,
-  },
+  input: { borderWidth: 1, borderColor: COLORS.cardBorder, borderRadius: 8, padding: 12, fontSize: 15, marginBottom: 12, color: COLORS.text },
   imageRow: { flexDirection: 'row', gap: 8, marginBottom: 12, flexWrap: 'wrap' },
-  imageBtn: {
-    backgroundColor: '#f0f0f0',
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 8,
-  },
+  imageBtn: { backgroundColor: '#f0f0f0', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 8 },
   imageBtnText: { fontSize: 13, fontWeight: '600', color: COLORS.textSecondary },
   filePreview: { marginBottom: 12 },
   fileLabel: { fontSize: 13, color: COLORS.textSecondary, marginBottom: 6 },
   preview: { width: '100%', height: 160, borderRadius: 8 },
-  refHeader: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
-    marginBottom: 8,
-  },
+  refHeader: { fontSize: 14, fontWeight: '600', color: COLORS.textSecondary, marginBottom: 8 },
   refRow: { flexDirection: 'row', gap: 8 },
   refInput: { flex: 1, marginBottom: 12 },
-  submitBtn: {
-    backgroundColor: COLORS.bronze,
-    padding: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
+  submitBtn: { backgroundColor: COLORS.bronze, padding: 14, borderRadius: 8, alignItems: 'center' },
   submitText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  item: {
-    backgroundColor: COLORS.card,
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: COLORS.cardBorder,
-  },
+  item: { backgroundColor: COLORS.card, borderRadius: 10, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: COLORS.cardBorder },
   itemRow: { flexDirection: 'row', alignItems: 'center' },
   thumb: { width: 48, height: 48, borderRadius: 6, marginRight: 12 },
-  fileIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 6,
-    marginRight: 12,
-    backgroundColor: '#f0f0f0',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+  fileIcon: { width: 48, height: 48, borderRadius: 6, marginRight: 12, backgroundColor: '#f0f0f0', justifyContent: 'center', alignItems: 'center' },
   fileIconText: { fontSize: 24 },
   itemInfo: { flex: 1 },
   itemTitle: { fontSize: 15, fontWeight: '600', color: COLORS.text },
   itemSub: { fontSize: 13, color: COLORS.textSecondary, marginTop: 2 },
-  refText: {
-    fontSize: 12,
-    color: COLORS.bronze,
-    marginTop: 4,
-    fontWeight: '500',
-  },
+  refText: { fontSize: 12, color: COLORS.bronze, marginTop: 4, fontWeight: '500' },
   editIcon: { fontSize: 18, color: COLORS.textSecondary, marginLeft: 8 },
-  deleteIcon: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: COLORS.red + '20',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  deleteIconText: { fontSize: 14 },
-  noResults: {
-    textAlign: 'center',
-    color: COLORS.textSecondary,
-    marginTop: 20,
-  },
+  noResults: { textAlign: 'center', color: COLORS.textSecondary, marginTop: 20 },
 });

@@ -1,68 +1,55 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  Modal,
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  ActivityIndicator,
-  Platform,
+  Modal, View, Text, TouchableOpacity, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as FileSystem from 'expo-file-system/legacy';
+import { getContentUri, isImageFile } from '../utils/pdfStorage';
+import ImageViewer from './ImageViewer';
 import { COLORS } from '../theme';
 
 export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
-  const [source, setSource] = React.useState(null);
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState(false);
-  const [errorMsg, setErrorMsg] = React.useState('');
+  const [source, setSource] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  React.useEffect(() => {
-    if (visible && fileUri) {
-      loadPDF();
-    } else {
-      setSource(null);
-    }
+  useEffect(() => {
+    if (visible && fileUri) loadFile();
+    else { setSource(null); setError(null); }
   }, [visible, fileUri]);
 
-  const loadPDF = async () => {
+  const loadFile = async () => {
     try {
       setLoading(true);
-      setError(false);
+      setError(null);
 
-      let uri = fileUri;
-
-      // If web URL, use directly
+      // Web URLs — open directly
       if (fileUri.startsWith('http://') || fileUri.startsWith('https://')) {
-        setSource({ uri });
+        setSource({ uri: fileUri });
         setLoading(false);
         return;
       }
 
-      // Copy to cache for reliable access
-      const cacheDir = FileSystem.cacheDirectory + 'pdfs/';
-      await FileSystem.makeDirectoryAsync(cacheDir, { intermediates: true });
-      const dest = cacheDir + (fileName || 'manual.pdf');
-      await FileSystem.copyAsync({ from: fileUri, to: dest });
+      // Ensure the file exists at the stored path
+      const info = await FileSystem.getInfoAsync(fileUri);
+      if (!info.exists) {
+        setError('File not found. It may have been moved or deleted.');
+        setLoading(false);
+        return;
+      }
 
-      // Get content:// URI for WebView access
-      const contentUri = await FileSystem.getContentUriAsync(dest);
-      setSource({ uri: contentUri });
+      // Get content URI for WebView access
+      const uri = await getContentUri(fileUri);
+      setSource({ uri });
       setLoading(false);
     } catch (e) {
-      console.log('PDF load error:', e);
-      // Fallback: try direct file URI
-      if (source?.uri) {
-        setError(true);
-        setErrorMsg(e.message || 'Could not load PDF');
-      } else {
-        // Last ditch - try the original fileUri
-        setSource({ uri: fileUri });
-        setLoading(false);
-      }
+      console.warn('PDFViewer error:', e);
+      setError(e.message || 'Could not open file');
+      setLoading(false);
     }
   };
+
+  if (!visible) return null;
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -71,7 +58,7 @@ export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
           <TouchableOpacity onPress={onClose} style={s.closeBtn}>
             <Text style={s.closeText}>← Back</Text>
           </TouchableOpacity>
-          <Text style={s.title} numberOfLines={1}>{fileName || 'PDF Viewer'}</Text>
+          <Text style={s.title} numberOfLines={1}>{fileName || 'Document'}</Text>
           <View style={{ width: 60 }} />
         </View>
 
@@ -79,14 +66,14 @@ export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
           {loading ? (
             <View style={s.center}>
               <ActivityIndicator size="large" color={COLORS.bronze} />
-              <Text style={s.loadTxt}>Loading PDF...</Text>
+              <Text style={s.loadTxt}>Opening...</Text>
             </View>
           ) : error ? (
             <View style={s.center}>
-              <Text style={s.errIcon}>⚠️</Text>
-              <Text style={s.errTitle}>Could not open PDF</Text>
-              <Text style={s.errSub}>{errorMsg}</Text>
-              <TouchableOpacity style={s.retry} onPress={loadPDF}>
+              <Text style={{ fontSize: 48, marginBottom: 12 }}>⚠️</Text>
+              <Text style={s.errTitle}>Could not open file</Text>
+              <Text style={s.errSub}>{error}</Text>
+              <TouchableOpacity style={s.retry} onPress={loadFile}>
                 <Text style={s.retryTxt}>Try Again</Text>
               </TouchableOpacity>
             </View>
@@ -107,6 +94,7 @@ export default function PDFViewer({ visible, fileUri, fileName, onClose }) {
                   <ActivityIndicator size="large" color={COLORS.bronze} />
                 </View>
               )}
+              onError={() => setError('WebView failed to load the file.')}
             />
           ) : null}
         </View>
@@ -130,7 +118,6 @@ const s = StyleSheet.create({
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#1a1a1a', padding: 20 },
   loadTxt: { color: COLORS.textSecondary, marginTop: 12, fontSize: 14 },
   overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: '#525659' },
-  errIcon: { fontSize: 48, marginBottom: 12 },
   errTitle: { fontSize: 18, fontWeight: '600', color: '#fff', marginBottom: 8 },
   errSub: { fontSize: 14, color: COLORS.textSecondary, textAlign: 'center', paddingHorizontal: 40, lineHeight: 20, marginBottom: 16 },
   retry: { marginTop: 12, backgroundColor: COLORS.bronze, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 8 },
