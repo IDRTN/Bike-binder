@@ -16,6 +16,11 @@ on:
       - 'package*.json'
   workflow_dispatch:
 
+# Only the latest BikeBinder Android build is actionable.
+concurrency:
+  group: bikebinder-standalone-android-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
