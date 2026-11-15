@@ -1,17 +1,30 @@
-name: Build Android APK
+name: Build BikeBinder standalone Android release APK
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [master]
+    paths:
+      - '.github/workflows/build-android.yml'
+      - 'app.json'
+      - 'App.js'
+      - 'index.js'
+      - 'storage.js'
+      - 'screens/**'
+      - 'components/**'
+      - 'hooks/**'
+      - 'utils/**'
+      - 'package*.json'
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    timeout-minutes: 50
     steps:
-      - name: Checkout original BikeBinder branch
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Node.js
@@ -20,75 +33,48 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Setup Java
+      - name: Install Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: '17'
 
-      - name: Verify preinstalled Android SDK
-        run: test -d "$ANDROID_HOME"
+      - name: Install exact project dependencies
+        run: npm ci
 
-      - name: Prebuild native project
+      - name: Clean Expo Android prebuild
         run: npx expo prebuild --platform android --clean --non-interactive
 
-      - name: Accept SDK licenses
-        run: yes | "$ANDROID_HOME"/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
-
-      - name: Build Android APK with original build configuration
-        working-directory: ./android
-        run: ./gradlew assembleDebug --no-daemon
-
-      - name: Verify package, version, and published original signing certificate
+      - name: Build standalone RELEASE APK with embedded Hermes JS
+        working-directory: android
         env:
-          GH_TOKEN: ${{ github.token }}
+          NODE_ENV: production
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Reject development-only APK and wrong version
+        shell: bash
         run: |
           set -euo pipefail
-          NEW_APK="android/app/build/outputs/apk/debug/app-debug.apk"
-          test -s "$NEW_APK"
-          mkdir -p prior
-          gh release download v1.2.0 --repo IDRTN/Bike-binder --pattern 'app-debug.apk' --dir prior --clobber
-          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
-          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
-          test -n "$SIGNER"
-          test -n "$AAPT"
-          "$SIGNER" verify "$NEW_APK"
-          "$SIGNER" verify prior/app-debug.apk
-          NEW_CERT="$("$SIGNER" verify --print-certs "$NEW_APK" | grep -m1 'certificate SHA-256 digest:' | awk '{print $NF}')"
-          OLD_CERT="$("$SIGNER" verify --print-certs prior/app-debug.apk | grep -m1 'certificate SHA-256 digest:' | awk '{print $NF}')"
-          test -n "$NEW_CERT"
-          echo "New certificate SHA-256: $NEW_CERT"
-          echo "Original published certificate SHA-256: $OLD_CERT"
-          if [ "$NEW_CERT" != "$OLD_CERT" ]; then
-            echo "::error::New signing certificate differs from published BikeBinder 1.2.0; aborting release."
+          APK='android/app/build/outputs/apk/release/app-release.apk'
+          test -s "$APK"
+          if ! unzip -Z1 "$APK" | grep -Fxq 'assets/index.android.bundle'; then
+            echo "::error::Missing assets/index.android.bundle; this APK would require Metro and cannot be installed as a standalone app"
             exit 1
           fi
-          PACKAGE_INFO="$("$AAPT" dump badging "$NEW_APK" | grep '^package:')"
-          echo "$PACKAGE_INFO"
-          echo "$PACKAGE_INFO" | grep "name='com.bikebinder.app'"
-          echo "$PACKAGE_INFO" | grep "versionCode='5'"
-          echo "$PACKAGE_INFO" | grep "versionName='1.2.2'"
-          echo "Verified published BikeBinder signing key, package, and version."
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n1)"
+          test -n "$AAPT"
+          PKG="$("$AAPT" dump badging "$APK" | grep "^package:")"
+          echo "$PKG"
+          echo "$PKG" | grep -F "name='com.bikebinder.app'"
+          echo "$PKG" | grep -F "versionCode='6'"
+          echo "$PKG" | grep -F "versionName='1.2.3'"
+          echo 'Verified: standalone JavaScript bundle embedded'
+          sha256sum "$APK"
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+      - name: Upload candidate APK for original-keystore signing
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: v1.2.2
-          name: BikeBinder v1.2.2 — GPS update
-          target_commitish: ${{ github.sha }}
-          prerelease: true
-          body: |
-            GPS tracking bug fix on the original BikeBinder master branch.
-            Original Android app ID: com.bikebinder.app.
-            Version code: 5.
-            APK signing certificate verified against the GitHub v1.2.0 release.
-
-            Important: This does not prove that the signing certificate matches
-            an existing installation obtained from another source. If Android
-            says App not installed, DO NOT uninstall or clear data. Existing
-            motorcycle and maintenance records could be lost.
-          files: android/app/build/outputs/apk/debug/app-debug.apk
-          fail_on_unmatched_files: true
+          name: BikeBinder-v1.2.3-STANDALONE-CANDIDATE-REQUIRES-ORIGINAL-SIGNING
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
