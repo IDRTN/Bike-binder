@@ -1,0 +1,44 @@
+name: Inspect archived BikeBinder signing certificates
+
+on:
+  push:
+    branches:
+      - fix/background-ride-mileage-20261114
+    paths:
+      - '.github/workflows/check-bikebinder-historical-signatures.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Compare old published APK signers with installed phone certificate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check older releases without building any APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          test -x "$SIGNER"
+          test -x "$AAPT"
+          PHONE="dd8c279ec28b342520ae868c7fe0d3fd4731e49f0fb2ebc4bb21dddbeec47fbd"
+          for VERSION in 1.0.0 1.1.0 1.2.0 1.2.2; do
+            mkdir -p "releases/$VERSION"
+            gh release download "v$VERSION" --repo IDRTN/Bike-binder --pattern 'app-debug.apk' --dir "releases/$VERSION"
+            APK="releases/$VERSION/app-debug.apk"
+            "$SIGNER" verify "$APK"
+            CERT="$("$SIGNER" verify --print-certs "$APK" | grep -m1 'certificate SHA-256 digest:' | awk '{print $NF}')"
+            INFO="$("$AAPT" dump badging "$APK" | grep '^package:')"
+            echo "RELEASE v$VERSION: $INFO"
+            echo "RELEASE v$VERSION SIGNER SHA256: $CERT"
+            if [ "$CERT" = "$PHONE" ]; then
+              echo "MATCH: v$VERSION APK matches installed phone fingerprint"
+            else
+              echo "NO MATCH: v$VERSION differs from installed phone fingerprint"
+            fi
+          done
