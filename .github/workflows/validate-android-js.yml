@@ -1,0 +1,29 @@
+name: Validate BikeBinder Android JavaScript
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Bundle app with Expo for Android and validate all JSX / imports
+        env:
+          EXPO_NO_TELEMETRY: '1'
+          NODE_ENV: production
+        run: npx expo export --platform android --output-dir /tmp/bikebinder-android-bundle
