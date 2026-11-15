@@ -63,7 +63,7 @@ export default function HomeScreen({ navigation }) {
       const remaining = (await loadPendingRides()).filter((r) => !r.logged);
       setPendingRides(remaining);
       setShowRidePrompt(remaining.length > 0);
-      Alert.alert('Ride Logged', `Added ${miles} miles to ${bike.make} ${bike.model}.`);
+      Alert.alert('Ride Logged', `Added ${miles} miles to ${updated.make} ${updated.model}.`);
     } catch (error) {
       Alert.alert('Unable to Log Ride', error.message || 'The ride was kept pending.');
     } finally {
