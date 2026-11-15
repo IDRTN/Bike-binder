@@ -55,5 +55,4 @@ jobs:
             --target "${{ github.sha }}" \
             --title "BikeBinder v1.2.1 — GPS mileage fix (test)" \
             --notes-file RELEASE_NOTES.md \
-            --prerelease \
-            --verify-tag
+            --prerelease
