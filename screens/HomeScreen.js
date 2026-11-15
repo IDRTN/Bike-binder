@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { loadMotorcycles, updateMotorcycle } from '../storage';
+import { loadMotorcycles, loadRideBikePreference, applyRideMilesToBike } from '../storage';
 import { COLORS } from '../theme';
 import { loadPendingRides, clearPendingRide } from '../utils/rideTracker';
 import { checkForUpdate, promptUpdate } from '../utils/updateChecker';
@@ -43,6 +43,7 @@ export default function HomeScreen({ navigation }) {
   const [pendingRides, setPendingRides] = useState([]);
   const [showRidePrompt, setShowRidePrompt] = useState(false);
   const [applyingRide, setApplyingRide] = useState(false);
+  const [autoRideNotice, setAutoRideNotice] = useState('');
 
   const applyPendingRide = async (ride, selectedBike) => {
     if (applyingRide) return;
@@ -54,15 +55,9 @@ export default function HomeScreen({ navigation }) {
 
     setApplyingRide(true);
     try {
-      // Reload current odometer to avoid applying to an outdated screen copy.
-      const latestBikes = await loadMotorcycles();
-      const bike = latestBikes.find((b) => b.id === selectedBike.id);
-      if (!bike) throw new Error('This motorcycle is no longer in the garage.');
-      const current = parseInt(bike.mileageCurrent || bike.mileageBought || '0', 10);
-      const updated = { ...bike, mileageCurrent: (current + miles).toString() };
-      await updateMotorcycle(updated);
+      const updated = await applyRideMilesToBike(ride, selectedBike.id);
       await clearPendingRide(ride.id);
-      setBikes(latestBikes.map((b) => b.id === bike.id ? updated : b));
+      setBikes(await loadMotorcycles());
       const remaining = (await loadPendingRides()).filter((r) => !r.logged);
       setPendingRides(remaining);
       setShowRidePrompt(remaining.length > 0);
@@ -155,6 +150,11 @@ export default function HomeScreen({ navigation }) {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
+        {autoRideNotice ? (
+          <View style={{ backgroundColor: COLORS.card, borderColor: COLORS.green, borderWidth: 1, borderRadius: 10, marginBottom: 14, padding: 12 }}>
+            <Text style={{ color: COLORS.green, fontWeight: '700' }}>{autoRideNotice}</Text>
+          </View>
+        ) : null}
         {/* Summary Cards */}
         <View style={styles.cardsGrid}>
           {cards.map((card) => (
@@ -210,7 +210,7 @@ export default function HomeScreen({ navigation }) {
         )}
       </ScrollView>
 
-      {/* Rides are kept pending until the user chooses which bike to update. */}
+      {/* Unlocked and unmatched rides remain pending for manual assignment. */}
       <Modal
         transparent
         visible={showRidePrompt && pendingRides.length > 0}
