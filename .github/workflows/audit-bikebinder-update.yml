@@ -1,0 +1,143 @@
+name: Audit original BikeBinder and publish update ZIP
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/audit-bikebinder-update.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    name: Verify original and update APKs, then package ZIP
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout original master and full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify original app identity and unchanged motorcycle data storage
+        run: |
+          set -euo pipefail
+          BASE="fdb1ee94fef53487c0d07a349ada209d462ca6b8"
+          UPDATE="b8449ede74f58464529c571ea81516879b3824fc"
+          git cat-file -e "$BASE^{commit}"
+          git cat-file -e "$UPDATE^{commit}"
+          test "$(git show "$BASE":app.json | node -e "let x='';process.stdin.on('data',d=>x+=d).on('end',()=>console.log(JSON.parse(x).expo.android.package))")" = "com.bikebinder.app"
+          test "$(git show "$UPDATE":app.json | node -e "let x='';process.stdin.on('data',d=>x+=d).on('end',()=>console.log(JSON.parse(x).expo.android.package))")" = "com.bikebinder.app"
+          git diff --quiet "$BASE" "$UPDATE" -- storage.js
+          git diff --quiet "$BASE" "$UPDATE" -- utils/pdfStorage.js
+          mkdir -p verified
+          git diff --stat "$BASE" "$UPDATE" > verified/SOURCE-COMPARISON.txt
+          git diff --name-status "$BASE" "$UPDATE" >> verified/SOURCE-COMPARISON.txt
+          printf '\nMotorcycle data storage and PDF storage source are unchanged.\n' >> verified/SOURCE-COMPARISON.txt
+
+      - name: Download previously released original and updated APKs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p original update
+          gh release download v1.2.0 --repo IDRTN/Bike-binder --pattern 'app-debug.apk' --dir original
+          gh release download v1.2.2 --repo IDRTN/Bike-binder --pattern 'app-debug.apk' --dir update
+          test -s original/app-debug.apk
+          test -s update/app-debug.apk
+
+      - name: Verify APK package, versions, signatures and hashes
+        run: |
+          set -euo pipefail
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$AAPT"
+          test -x "$SIGNER"
+          "$SIGNER" verify original/app-debug.apk
+          "$SIGNER" verify update/app-debug.apk
+          OLD_INFO="$("$AAPT" dump badging original/app-debug.apk | grep '^package:')"
+          NEW_INFO="$("$AAPT" dump badging update/app-debug.apk | grep '^package:')"
+          echo "$OLD_INFO" | grep -F "name='com.bikebinder.app'"
+          echo "$OLD_INFO" | grep -F "versionCode='3'"
+          echo "$OLD_INFO" | grep -F "versionName='1.2.0'"
+          echo "$NEW_INFO" | grep -F "name='com.bikebinder.app'"
+          echo "$NEW_INFO" | grep -F "versionCode='5'"
+          echo "$NEW_INFO" | grep -F "versionName='1.2.2'"
+          OLD_CERT="$("$SIGNER" verify --print-certs original/app-debug.apk | grep -m1 'certificate SHA-256 digest:' | awk '{print $NF}')"
+          NEW_CERT="$("$SIGNER" verify --print-certs update/app-debug.apk | grep -m1 'certificate SHA-256 digest:' | awk '{print $NF}')"
+          test -n "$OLD_CERT"
+          if [ "$OLD_CERT" != "$NEW_CERT" ]; then
+            echo "::error::Published v1.2.0 and v1.2.2 APK certificates differ! Cannot package."
+            exit 1
+          fi
+          cat > verified/APK-VERIFICATION.txt <<EOF
+          BikeBinder original v1.2.0 vs GPS fix v1.2.2
+          ======================================================
+          Original source build: master @ fdb1ee94fef53487c0d07a349ada209d462ca6b8
+          GPS update source:    master @ b8449ede74f58464529c571ea81516879b3824fc
+
+          ORIGINAL: $OLD_INFO
+          UPDATE:   $NEW_INFO
+
+          Original signing certificate SHA-256: $OLD_CERT
+          Update signing certificate SHA-256:   $NEW_CERT
+          RESULT: THE TWO PUBLISHED APK SIGNING CERTIFICATES MATCH.
+
+          This comparison DOES NOT determine the signature of the BikeBinder
+          v1.2.0 installation currently on the user's phone. Android rejected
+          v1.2.1 and v1.2.2 during in-place installation. Do not uninstall,
+          clear storage, or promise a successful update without verifying that
+          installed app's signer or obtaining the exact PackageInstaller error.
+
+          APK binary SHA-256:
+          EOF
+          sha256sum original/app-debug.apk update/app-debug.apk >> verified/APK-VERIFICATION.txt
+          echo "Verified original and update package, version and signer."
+
+      - name: Create single ZIP with exact verified update APK and audit
+        run: |
+          set -euo pipefail
+          mkdir -p bundle
+          cp update/app-debug.apk bundle/BikeBinder-v1.2.2.apk
+          cp verified/*.txt bundle/
+          cat > bundle/READ-ME-FIRST.txt <<'EOF'
+          BikeBinder original-master GPS update: v1.2.2
+          ============================================
+          This ZIP includes the already-published v1.2.2 APK and verification
+          records. It is NOT a new application or a differently signed rebuild.
+
+          1) ZIP contains BikeBinder-v1.2.2.apk and audit reports.
+          2) Both published v1.2.0 and v1.2.2 use the same app ID and signer.
+          3) That does not prove the signer matches the BikeBinder installed
+             on your particular phone, which has already rejected updates.
+          4) Before trying another installation, determine the installed
+             BikeBinder signature via an app signature viewer (e.g. F-Droid
+             App Manager) or Android ADB diagnostics. Compare to the signer
+             in APK-VERIFICATION.txt.
+          5) Do not uninstall BikeBinder v1.2.0, clear its data, or overwrite
+             your motorcycle information. If installation says
+             "App not installed," STOP and obtain the specific Android error.
+          6) ZIP must be extracted before tapping the APK.
+
+          No private signing key is included in this ZIP.
+          EOF
+          (cd bundle && zip -q -9 ../BikeBinder-v1.2.2-Original-Update-Audit.zip ./*)
+          test -s BikeBinder-v1.2.2-Original-Update-Audit.zip
+          unzip -t BikeBinder-v1.2.2-Original-Update-Audit.zip | tail -n 2
+          ls -lh BikeBinder-v1.2.2-Original-Update-Audit.zip
+
+      - name: Attach ZIP directly to existing original-master v1.2.2 prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload v1.2.2 BikeBinder-v1.2.2-Original-Update-Audit.zip --repo IDRTN/Bike-binder --clobber
+
+      - name: Upload ZIP as GitHub Actions download too
+        uses: actions/upload-artifact@v4
+        with:
+          name: BikeBinder-Original-Update-Audit-ZIP
+          path: BikeBinder-v1.2.2-Original-Update-Audit.zip
+          if-no-files-found: error
+          retention-days: 30
