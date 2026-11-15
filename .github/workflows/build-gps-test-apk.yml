@@ -1,4 +1,4 @@
-name: Build BikeBinder GPS Test APK
+name: Build BikeBinder GPS Update APK
 
 on:
   push:
@@ -27,18 +27,10 @@ jobs:
       - name: Install JS dependencies
         run: npm ci --no-audit --no-fund
 
-      - name: Configure separate, self-contained GPS test app
+      - name: Verify existing app package
         run: |
-          node <<'NODE'
-          const fs = require('fs');
-          const config = JSON.parse(fs.readFileSync('app.json', 'utf8'));
-          config.expo.name = 'BikeBinder GPS Test';
-          config.expo.android.package = 'com.bikebinder.gpstest';
-          // Do not fetch production over-the-air updates into an isolated test APK.
-          config.expo.updates = { ...config.expo.updates, enabled: false };
-          fs.writeFileSync('app.json', JSON.stringify(config, null, 2) + '\n');
-          console.log('Preparing standalone GPS test:', config.expo.android.package);
-          NODE
+          test "$(node -p "require('./app.json').expo.android.package")" = "com.bikebinder.app"
+          test "$(node -p "require('./app.json').expo.android.versionCode")" = "4"
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -59,24 +51,39 @@ jobs:
       - name: Accept Android SDK licenses
         run: yes | "$ANDROID_HOME"/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
 
-      - name: Build standalone Android release APK
+      - name: Build upgrade APK with the existing app ID
         working-directory: ./android
-        run: ./gradlew assembleRelease --no-daemon
+        run: ./gradlew assembleDebug --no-daemon
 
-      - name: Verify bundled JS and APK signature
+      - name: Compare signing certificate with published BikeBinder APK
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          APK="$(find android/app/build/outputs/apk/release -maxdepth 1 -name '*.apk' | head -n 1)"
-          test -n "$APK"
-          unzip -l "$APK" | grep 'assets/index.android.bundle'
+          set -euo pipefail
+          NEW_APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$NEW_APK"
+          mkdir -p prior-build
+          gh release download v1.2.0 --repo IDRTN/Bike-binder --pattern "app-debug.apk" --dir prior-build --clobber
+          OLD_APK="prior-build/app-debug.apk"
           SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -n "$SIGNER"
-          "$SIGNER" verify "$APK"
-          ls -lh "$APK"
+          "$SIGNER" verify "$NEW_APK"
+          "$SIGNER" verify "$OLD_APK"
+          NEW_CERT="$("$SIGNER" verify --print-certs "$NEW_APK" | grep -m1 "certificate SHA-256 digest:" | awk '{print $NF}')"
+          OLD_CERT="$("$SIGNER" verify --print-certs "$OLD_APK" | grep -m1 "certificate SHA-256 digest:" | awk '{print $NF}')"
+          echo "New APK signing cert SHA256: $NEW_CERT"
+          echo "Published APK signing cert SHA256: $OLD_CERT"
+          if [ -z "$NEW_CERT" ] || [ "$NEW_CERT" != "$OLD_CERT" ]; then
+            echo "::error::Signing keys differ. Do not replace the installed BikeBinder. The original signing key is required."
+            exit 1
+          fi
+          echo "Signing certificate matches published BikeBinder version 1.2.0"
+          ls -lh "$NEW_APK"
 
-      - name: Upload installable APK (test only)
+      - name: Upload BikeBinder upgrade APK
         uses: actions/upload-artifact@v4
         with:
-          name: BikeBinder-GPS-Standalone-APK
-          path: android/app/build/outputs/apk/release/*.apk
+          name: BikeBinder-1.2.1-GPS-Update-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
