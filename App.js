@@ -1,4 +1,5 @@
 import React from 'react';
+import './utils/rideTracker'; // Register background GPS task at app startup.
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
