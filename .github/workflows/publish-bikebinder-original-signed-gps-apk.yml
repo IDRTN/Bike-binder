@@ -1,0 +1,55 @@
+# One-time publication of the original-install-key signed GPS fix.
+# Uses the public v1.2.2 release APK and a verified 4 KiB replacement
+# APK v2 signing block (public signature only; NO keystore or passwords).
+# Does not compile or modify app logic or motorcycle data.
+name: Publish BikeBinder v1.2.2 original-signature GPS APK
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/publish-bikebinder-original-signed-gps-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download existing published v1.2.2 APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/bikebinder
+          gh release download v1.2.2 --repo "$GITHUB_REPOSITORY" --pattern 'app-debug.apk' --dir /tmp/bikebinder
+
+      - name: Apply and verify original-key signing correction
+        run: |
+          python3 - <<'PY'
+            from pathlib import Path
+            import base64, gzip, hashlib, zipfile
+            source = Path('/tmp/bikebinder/app-debug.apk')
+            dest = Path('/tmp/bikebinder/BikeBinder-v1.2.2-GPS-FIX-ORIGINAL-SIGNATURE.apk')
+            data = source.read_bytes()
+            assert hashlib.sha256(data).hexdigest() == '04e986af20d146e26c7412ac897f9ac808584117d52adc5679995dc5c04de16a', 'Unexpected source release APK; refusing to patch'
+            block = gzip.decompress(base64.b64decode('H4sIAAAAAAAC//vBzwAGu1khtFQ7Z+FmIHs9EBcyMzDoAMU0gJiZkYFBAUgnf0nelek740Xz/Hrpcz2tJv8nX5M8JLGc452c5CWGu/LbTIF6DIHYoIlZ16CJSXQBMxMjExNHWNj/22Z6zFsNeNk4tdo82r7zMjJyszIYuBhyG3CyMYeysAkzhQYbchqwgzgcwgwwJjuCyYVgciOYzMIMBgrivEZmBmaGZgamRgYmhlES/EYGpsaGhgaGUAEq2dPEqITsAUZWBuYmRn6QOBdTEyMjw4W+m+FHlhtN5f1UGeEXm2Dd9Xb6vXfejjUze994xz0WCMqK4f1WlrTkw/oVIfFHvXzz2f0aYnYfXi/beCXXXSPmS/ml77Jave1ylTY9O4Mi6hIt7u27s+mCein/0ZjmKYvSzefUOxfyHZnV0yHE/lnpF4fT6sfMn/xsQ2yMZn58ryzs8iGA96yWyf6dVdWMzc3BIu+Slzz9bsAfPpVHZ9kPHVM5bx5+UbW9jOIH8x4WBq76uJ+98/0f/pL/FrwlL9P//X25VUF3jezOKxemNc++ff7wfDkF+/kc71MFG+d8y21c9PrbpcPTNbv+v9+zpn1t2NQ6BocuC8bzSlxuDyUSuE58Pzz56cbLJ+wDmYCphHGxooG8gSwwyGT5WMRYRJiD1u47HTN1q2aF43OpUuMz7v3fi9FSATMo7FqEzWVlPezLhHqOSHsorJ62Z+9uPbFi82v8U1kCeQX2ZVxtD5uU3Nb3mGGJufO+S7fS6xOXH07/+bnTQslQe/OxZXam3Je+iHSUdq69me3lVBt7YMc3joJX86eenMZqmfWeU7rYdt92WdHOdZfvFazXj6x2EE7o/xHSfyJYdcNK+f7kvXqyvmUNtyYvf1dw9GfrS+NXO9yOVLOpxiV9/OV0q6nl5bkKO96c263rJjvujbXLmLSjyaFm/8zrh30eL0k4z9f9QzE9VNgiJi+uuixeKUN/15TjJQvfHeELfxO2NXXisgjNjXyKkSf1/ecvYtjT/H2l3PmYH1JM8pvOV1fE+Lzi/bbuHcP8CsUXDFDAA8xoHIyQDMcAxGWNq8xVSg4uu+O41Z/5mJHLOxtm91nOnEW1h35tX2Bkp8orKZTg1KszOYdDb5qAsgO7bdOKg7rtSpvy3/BLnDx27Pdspd3e2YtnGNdazNuquODO63NfSrf41F4WvtphorH76mpTo0lNdSvMXG/23BJZ7HdgmVWNTbVAGevFObc4bx4/43jBbT3Lnv1GZo1HvO5e+dNsx8ta6Mysd17j7PtWe7HNS0oOfBXO4LFLVrt7KFExIm2XVaDWg3tt78RLc4vv3klxfurx9/fPydxJL7WNOZs2V02NXnHRPniH37PCfMM7l76sTGs8nKpaNCNCct0EzZ67UrcSCiNuyPOzZCq1nFzAsj16nc9Cp4Or1RgZRjMeURlPlAuSgspTi5wYRsEoGAWjYBSMglEwCkbByAY/oP18xwBvheDMdAWnnPzkbAUTIwANCXt2ABAAAA=='))
+            start = 186407090
+            assert len(block) == 4096 and data[start+4080:start+4096] == b'APK Sig Block 42', 'Unexpected APK signing block'
+            updated = data[:start] + block + data[start+4096:]
+            assert hashlib.sha256(updated).hexdigest() == 'd43173f113104ddbfd77c90ae66fae1ccec62f6cf2a7f3e64848c8ab80662a6e', 'Signed APK checksum mismatch'
+            dest.write_bytes(updated)
+            with zipfile.ZipFile(dest) as z:
+                assert z.testzip() is None, 'ZIP integrity check failed'
+            print('Corrected APK verified:', dest, 'bytes:', len(updated))
+
+          PY
+
+      - name: Publish downloadable corrected APK to existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload v1.2.2 /tmp/bikebinder/BikeBinder-v1.2.2-GPS-FIX-ORIGINAL-SIGNATURE.apk --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit v1.2.2 --repo "$GITHUB_REPOSITORY" --latest
