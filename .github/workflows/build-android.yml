@@ -11,7 +11,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout
+      - name: Checkout original BikeBinder branch
         uses: actions/checkout@v4
 
       - name: Setup Node.js
@@ -29,53 +29,66 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Decode release keystore (if available)
-        run: |
-          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
-            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/release.keystore
-            echo "Keystore decoded"
-          else
-            echo "No keystore secret set — skipping release signing"
-          fi
+      - name: Verify preinstalled Android SDK
+        run: test -d "$ANDROID_HOME"
 
       - name: Prebuild native project
-        run: npx expo prebuild --platform android --clean
+        run: npx expo prebuild --platform android --clean --non-interactive
 
       - name: Accept SDK licenses
-        run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1
+        run: yes | "$ANDROID_HOME"/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
 
-      - name: Build debug APK (unsigned)
+      - name: Build Android APK with original build configuration
         working-directory: ./android
         run: ./gradlew assembleDebug --no-daemon
 
-      - name: Build release APK (signed)
-        working-directory: ./android
+      - name: Verify package, version, and published original signing certificate
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -f release.keystore ]; then
-            ./gradlew assembleRelease --no-daemon \
-              -PANDROID_KEYSTORE_FILE=release.keystore \
-              -PANDROID_KEYSTORE_PASSWORD=${{ secrets.ANDROID_KEYSTORE_PASSWORD }} \
-              -PANDROID_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }} \
-              -PANDROID_KEY_PASSWORD=${{ secrets.ANDROID_KEY_PASSWORD }}
-          else
-            echo "Skipping release build (no keystore)"
+          set -euo pipefail
+          NEW_APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$NEW_APK"
+          mkdir -p prior
+          gh release download v1.2.0 --repo IDRTN/Bike-binder --pattern 'app-debug.apk' --dir prior --clobber
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          test -n "$SIGNER"
+          test -n "$AAPT"
+          "$SIGNER" verify "$NEW_APK"
+          "$SIGNER" verify prior/app-debug.apk
+          NEW_CERT="$("$SIGNER" verify --print-certs "$NEW_APK" | grep -m1 'certificate SHA-256 digest:' | awk '{print $NF}')"
+          OLD_CERT="$("$SIGNER" verify --print-certs prior/app-debug.apk | grep -m1 'certificate SHA-256 digest:' | awk '{print $NF}')"
+          test -n "$NEW_CERT"
+          echo "New certificate SHA-256: $NEW_CERT"
+          echo "Original published certificate SHA-256: $OLD_CERT"
+          if [ "$NEW_CERT" != "$OLD_CERT" ]; then
+            echo "::error::New signing certificate differs from published BikeBinder 1.2.0; aborting release."
+            exit 1
           fi
-
-      - name: Get version
-        run: |
-          echo "VERSION=v$(node -p "require('./app.json').expo.version")" >> $GITHUB_ENV
+          PACKAGE_INFO="$("$AAPT" dump badging "$NEW_APK" | grep '^package:')"
+          echo "$PACKAGE_INFO"
+          echo "$PACKAGE_INFO" | grep "name='com.bikebinder.app'"
+          echo "$PACKAGE_INFO" | grep "versionCode='5'"
+          echo "$PACKAGE_INFO" | grep "versionName='1.2.2'"
+          echo "Verified published BikeBinder signing key, package, and version."
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.VERSION }}
-          name: Bike Binder ${{ env.VERSION }}
+          tag_name: v1.2.2
+          name: BikeBinder v1.2.2 — GPS update
+          target_commitish: ${{ github.sha }}
+          prerelease: true
           body: |
-            Latest build of Bike Binder.
-          files: |
-            android/app/build/outputs/apk/debug/*.apk
-            android/app/build/outputs/apk/release/*.apk
-          fail_on_unmatched_files: false
+            GPS tracking bug fix on the original BikeBinder master branch.
+            Original Android app ID: com.bikebinder.app.
+            Version code: 5.
+            APK signing certificate verified against the GitHub v1.2.0 release.
+
+            Important: This does not prove that the signing certificate matches
+            an existing installation obtained from another source. If Android
+            says App not installed, DO NOT uninstall or clear data. Existing
+            motorcycle and maintenance records could be lost.
+          files: android/app/build/outputs/apk/debug/app-debug.apk
+          fail_on_unmatched_files: true
