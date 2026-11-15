@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Modal,
   Pressable,
+  Alert,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -41,6 +42,37 @@ export default function HomeScreen({ navigation }) {
   const [bikes, setBikes] = useState([]);
   const [pendingRides, setPendingRides] = useState([]);
   const [showRidePrompt, setShowRidePrompt] = useState(false);
+  const [applyingRide, setApplyingRide] = useState(false);
+
+  const applyPendingRide = async (ride, selectedBike) => {
+    if (applyingRide) return;
+    const miles = Math.round(Number(ride.miles));
+    if (!Number.isFinite(miles) || miles <= 0) {
+      Alert.alert('Ride Too Short', 'This ride rounds to zero whole miles. It will remain pending.');
+      return;
+    }
+
+    setApplyingRide(true);
+    try {
+      // Reload current odometer to avoid applying to an outdated screen copy.
+      const latestBikes = await loadMotorcycles();
+      const bike = latestBikes.find((b) => b.id === selectedBike.id);
+      if (!bike) throw new Error('This motorcycle is no longer in the garage.');
+      const current = parseInt(bike.mileageCurrent || bike.mileageBought || '0', 10);
+      const updated = { ...bike, mileageCurrent: (current + miles).toString() };
+      await updateMotorcycle(updated);
+      await clearPendingRide(ride.id);
+      setBikes(latestBikes.map((b) => b.id === bike.id ? updated : b));
+      const remaining = (await loadPendingRides()).filter((r) => !r.logged);
+      setPendingRides(remaining);
+      setShowRidePrompt(remaining.length > 0);
+      Alert.alert('Ride Logged', `Added ${miles} miles to ${bike.make} ${bike.model}.`);
+    } catch (error) {
+      Alert.alert('Unable to Log Ride', error.message || 'The ride was kept pending.');
+    } finally {
+      setApplyingRide(false);
+    }
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -48,10 +80,8 @@ export default function HomeScreen({ navigation }) {
         setBikes(await loadMotorcycles());
         const rides = await loadPendingRides();
         const unlogged = rides.filter(r => !r.logged);
-        if (unlogged.length > 0) {
-          setPendingRides(unlogged);
-          setShowRidePrompt(true);
-        }
+        setPendingRides(unlogged);
+        setShowRidePrompt(unlogged.length > 0);
         // Check for app updates
         const update = await checkForUpdate();
         if (update) {
@@ -179,6 +209,55 @@ export default function HomeScreen({ navigation }) {
           </View>
         )}
       </ScrollView>
+
+      {/* Rides are kept pending until the user chooses which bike to update. */}
+      <Modal
+        transparent
+        visible={showRidePrompt && pendingRides.length > 0}
+        animationType="fade"
+        onRequestClose={() => setShowRidePrompt(false)}
+      >
+        <Pressable
+          style={ridePromptStyles.modalOverlay}
+          onPress={() => setShowRidePrompt(false)}
+        >
+          <Pressable style={ridePromptStyles.modalContent} onPress={() => {}}>
+            <Text style={ridePromptStyles.modalTitle}>Ride Complete</Text>
+            <Text style={ridePromptStyles.rideDistance}>
+              {pendingRides[0]?.miles ?? 0} mi
+            </Text>
+            <Text style={ridePromptStyles.rideDate}>
+              {pendingRides[0]?.date ? new Date(pendingRides[0].date).toLocaleString() : ''}
+            </Text>
+            <Text style={ridePromptStyles.ridePrompt}>Add these miles to which motorcycle?</Text>
+            {bikes.length ? (
+              <ScrollView style={ridePromptStyles.bikeListShort}>
+                {bikes.map((bike) => (
+                  <TouchableOpacity
+                    key={bike.id}
+                    style={ridePromptStyles.bikeOption}
+                    disabled={applyingRide}
+                    onPress={() => applyPendingRide(pendingRides[0], bike)}
+                  >
+                    <Text style={ridePromptStyles.bikeName}>{bike.make} {bike.model}</Text>
+                    <Text style={ridePromptStyles.bikeMiles}>
+                      {parseInt(bike.mileageCurrent || bike.mileageBought || '0', 10).toLocaleString()} mi
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            ) : (
+              <Text style={ridePromptStyles.noBikes}>Add a motorcycle to your garage before logging this ride.</Text>
+            )}
+            <TouchableOpacity
+              style={ridePromptStyles.dismissBtn}
+              onPress={() => setShowRidePrompt(false)}
+            >
+              <Text style={ridePromptStyles.dismissText}>Later (keep pending)</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }

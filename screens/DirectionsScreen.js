@@ -17,6 +17,7 @@ import {
   startMonitoring,
   stopTracking,
   setStatusCallback,
+  getStatus,
 } from '../utils/rideTracker';
 import { COLORS } from '../theme';
 
@@ -64,21 +65,31 @@ export default function DirectionsScreen() {
     });
 
     return () => {
-      stopTracking();
+      // Tab navigation must not interrupt the background ride task.
       setStatusCallback(null);
     };
   }, []);
 
   useFocusEffect(
     useCallback(() => {
+      let active = true;
+      // Rehydrate the view when returning to the tab or reopening the app.
+      getStatus().then((status) => {
+        if (!active) return;
+        setTrackerStatus(status.status);
+        setTrackerMiles(status.miles);
+        setTrackerDuration(status.duration);
+      }).catch((error) => console.error('Ride status restore failed', error));
       (async () => {
         const all = await loadMotorcycles();
+        if (!active) return;
         setBikes(all);
         if (selectedBike) {
           const stillThere = all.find((b) => b.id === selectedBike.id);
           if (!stillThere) setSelectedBike(null);
         }
       })();
+      return () => { active = false; };
     }, [])
   );
 
@@ -90,13 +101,17 @@ export default function DirectionsScreen() {
     }
   };
 
-  const handleStopTracker = () => {
-    stopTracking();
+  const handleStopTracker = async () => {
+    try {
+      await stopTracking();
+    } catch (error) {
+      Alert.alert('Tracking Error', error.message || 'Unable to stop GPS tracking.');
+    }
   };
 
   const handleLogRide = async () => {
-    const miles = parseInt(rideMiles, 10);
-    if (!miles || miles <= 0) {
+    const miles = Math.round(Number(rideMiles));
+    if (!Number.isFinite(miles) || miles <= 0) {
       Alert.alert('Invalid', 'Please enter a valid number of miles.');
       return;
     }
@@ -284,7 +299,7 @@ export default function DirectionsScreen() {
               placeholderTextColor={COLORS.textSecondary}
               value={rideMiles}
               onChangeText={setRideMiles}
-              keyboardType="number-pad"
+              keyboardType="decimal-pad"
               autoFocus
             />
             <View style={styles.modalActions}>
