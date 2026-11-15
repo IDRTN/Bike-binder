@@ -1,19 +1,8 @@
 name: Build BikeBinder standalone Android release APK
 
+# Manual releases only: avoid consuming GitHub Actions storage and build time
+# on every app change. Start a new APK only when we are ready to publish.
 on:
-  push:
-    branches: [master]
-    paths:
-      - '.github/workflows/build-android.yml'
-      - 'app.json'
-      - 'App.js'
-      - 'index.js'
-      - 'storage.js'
-      - 'screens/**'
-      - 'components/**'
-      - 'hooks/**'
-      - 'utils/**'
-      - 'package*.json'
   workflow_dispatch:
 
 # Only the latest BikeBinder Android build is actionable.
@@ -148,4 +137,4 @@ jobs:
           name: BikeBinder-v1.2.5-GPS-FIX-INSTALL-READY
           path: dist/BikeBinder-v1.2.5-GPS-STANDALONE.apk
           if-no-files-found: error
-          retention-days: 90
+          retention-days: 3
