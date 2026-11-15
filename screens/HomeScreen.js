@@ -71,18 +71,56 @@ export default function HomeScreen({ navigation }) {
 
   useFocusEffect(
     useCallback(() => {
+      let active = true;
       (async () => {
-        setBikes(await loadMotorcycles());
-        const rides = await loadPendingRides();
-        const unlogged = rides.filter(r => !r.logged);
-        setPendingRides(unlogged);
-        setShowRidePrompt(unlogged.length > 0);
-        // Check for app updates
-        const update = await checkForUpdate();
-        if (update) {
-          promptUpdate(update);
+        try {
+          let currentBikes = await loadMotorcycles();
+          const pref = await loadRideBikePreference();
+          const locked = currentBikes.find((bike) => bike.id === pref.lockedBikeId);
+          const rides = (await loadPendingRides()).filter((ride) => !ride.logged);
+          let loggedCount = 0;
+          let loggedMiles = 0;
+          if (locked) {
+            // Only rides completed with this exact bike locked are auto-assigned.
+            for (const ride of rides) {
+              if (ride.lockedBikeId !== locked.id) continue;
+              try {
+                await applyRideMilesToBike(ride, locked.id);
+                await clearPendingRide(ride.id);
+                loggedCount += 1;
+                loggedMiles += Math.round(Number(ride.miles));
+              } catch (error) {
+                console.error('Could not auto-log locked motorcycle ride:', error);
+                // Keep the ride pending so it can be recovered manually.
+              }
+            }
+            currentBikes = await loadMotorcycles();
+          }
+          const remaining = (await loadPendingRides()).filter((ride) => !ride.logged);
+          if (!active) return;
+          setBikes(currentBikes);
+          setPendingRides(remaining);
+          setShowRidePrompt(remaining.length > 0);
+          setAutoRideNotice(loggedCount
+            ? '✓ Auto-logged ' + loggedMiles + ' mi to ' + locked.make + ' ' + locked.model
+            : '');
+          try {
+            const update = await checkForUpdate();
+            if (active && update) promptUpdate(update);
+          } catch (error) {
+            console.warn('Update check failed:', error);
+          }
+        } catch (error) {
+          console.error('Failed to load BikeBinder dashboard:', error);
+          if (active) {
+            setBikes(await loadMotorcycles());
+            const remaining = (await loadPendingRides()).filter((ride) => !ride.logged);
+            setPendingRides(remaining);
+            setShowRidePrompt(remaining.length > 0);
+          }
         }
       })();
+      return () => { active = false; };
     }, [])
   );
 
