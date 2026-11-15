@@ -14,6 +14,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { loadMotorcycles, loadRideBikePreference, applyRideMilesToBike } from '../storage';
 import { COLORS } from '../theme';
+import { insuranceWarningText, insuranceDaysRemaining } from '../utils/insuranceReminders';
 import { loadPendingRides, clearPendingRide } from '../utils/rideTracker';
 import { checkForUpdate, promptUpdate } from '../utils/updateChecker';
 
@@ -140,6 +141,7 @@ export default function HomeScreen({ navigation }) {
 
   // Compute stats
   const totalBikes = bikes.length;
+  const insuranceAlerts = bikes.filter((bike) => insuranceDaysRemaining(bike.insuranceExpiryDate) !== null && insuranceDaysRemaining(bike.insuranceExpiryDate) <= 30);
 
   let servicesDue = 0;
   let totalParts = 0;
@@ -224,6 +226,24 @@ export default function HomeScreen({ navigation }) {
                 </TouchableOpacity>
               ))}
             </View>
+          </View>
+        )}
+
+        {insuranceAlerts.length > 0 && (
+          <View style={{ backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.yellow, borderRadius: 12, padding: 14, marginBottom: 14 }}>
+            <Text style={{ color: COLORS.yellow, fontSize: 16, fontWeight: '800', marginBottom: 8 }}>
+              ⚠ Insurance renewal reminders
+            </Text>
+            {insuranceAlerts.map((bike) => (
+              <TouchableOpacity key={bike.id} style={{ paddingVertical: 9, borderTopWidth: 1, borderTopColor: COLORS.cardBorder }}
+                onPress={() => navigation.navigate('MotorcyclesTab', {
+                  screen: 'MotorcycleDetail',
+                  params: { motorcycleId: bike.id, initialTab: 'Insurance' },
+                })}>
+                <Text style={{ color: COLORS.text, fontWeight: '700', fontSize: 14 }}>{bike.make} {bike.model}</Text>
+                <Text style={{ color: COLORS.yellow, fontSize: 13, marginTop: 3 }}>{insuranceWarningText(bike.insuranceExpiryDate)}</Text>
+              </TouchableOpacity>
+            ))}
           </View>
         )}
 
