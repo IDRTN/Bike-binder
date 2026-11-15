@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - fix/background-ride-mileage-20261114
+    paths:
+      - 'App.js'
+      - 'app.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'screens/**'
+      - 'utils/**'
   workflow_dispatch:
 
 permissions:
