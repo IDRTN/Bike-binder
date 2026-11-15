@@ -24,14 +24,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p /tmp/bikebinder
-          gh release download v1.2.2 --repo "$GITHUB_REPOSITORY" --pattern 'app-debug.apk' --dir /tmp/bikebinder
+          gh release download v1.2.2 --repo "$GITHUB_REPOSITORY" --pattern 'BikeBinder-v1.2.2-Original-Update-Audit.zip' --dir /tmp/bikebinder
+          unzip -j -o /tmp/bikebinder/BikeBinder-v1.2.2-Original-Update-Audit.zip 'BikeBinder-v1.2.2.apk' -d /tmp/bikebinder
 
       - name: Apply and verify original-key signing correction
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import base64, gzip, hashlib, zipfile
-          source = Path('/tmp/bikebinder/app-debug.apk')
+          source = Path('/tmp/bikebinder/BikeBinder-v1.2.2.apk')
           dest = Path('/tmp/bikebinder/BikeBinder-v1.2.2-GPS-FIX-ORIGINAL-SIGNATURE.apk')
           data = source.read_bytes()
           assert hashlib.sha256(data).hexdigest() == '04e986af20d146e26c7412ac897f9ac808584117d52adc5679995dc5c04de16a', 'Unexpected source release APK; refusing to patch'
