@@ -12,7 +12,10 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
-import { loadMotorcycles, updateMotorcycle } from '../storage';
+import {
+  loadMotorcycles, updateMotorcycle,
+  loadRideBikePreference, saveRideBikePreference,
+} from '../storage';
 import {
   startMonitoring,
   stopTracking,
@@ -30,12 +33,13 @@ function formatDuration(seconds) {
   return `${s}s`;
 }
 
-export default function DirectionsScreen() {
+export default function DirectionsScreen({ navigation }) {
   const insets = useSafeAreaInsets();
 
   // Bike selection
   const [bikes, setBikes] = useState([]);
   const [selectedBike, setSelectedBike] = useState(null);
+  const [lockedBikeId, setLockedBikeId] = useState(null);
   const [showBikePicker, setShowBikePicker] = useState(false);
   const [showLogRide, setShowLogRide] = useState(false);
   const [rideMiles, setRideMiles] = useState('');
@@ -84,14 +88,41 @@ export default function DirectionsScreen() {
         const all = await loadMotorcycles();
         if (!active) return;
         setBikes(all);
-        if (selectedBike) {
-          const stillThere = all.find((b) => b.id === selectedBike.id);
-          if (!stillThere) setSelectedBike(null);
-        }
+        const pref = await loadRideBikePreference();
+        if (!active) return;
+        const locked = all.find((bike) => bike.id === pref.lockedBikeId);
+        const remembered = all.find((bike) => bike.id === pref.selectedBikeId);
+        setLockedBikeId(locked?.id || null);
+        setSelectedBike(locked || remembered || null);
       })();
       return () => { active = false; };
     }, [])
   );
+
+  const handleSelectBike = async (bike) => {
+    if (lockedBikeId || trackerStatus === 'tracking' || trackerStatus === 'monitoring') {
+      Alert.alert('Bike Locked', 'Unlock the motorcycle and stop tracking before switching bikes.');
+      return;
+    }
+    try {
+      await saveRideBikePreference({ selectedBikeId: bike.id, lockedBikeId: null });
+      setSelectedBike(bike);
+      setShowBikePicker(false);
+    } catch (error) {
+      Alert.alert('Could not remember bike', error.message || 'Please try again.');
+    }
+  };
+
+  const toggleBikeLock = async () => {
+    if (!selectedBike || isTrackingActive) return;
+    const nextLock = lockedBikeId ? null : selectedBike.id;
+    try {
+      await saveRideBikePreference({ selectedBikeId: selectedBike.id, lockedBikeId: nextLock });
+      setLockedBikeId(nextLock);
+    } catch (error) {
+      Alert.alert('Could not save bike lock', error.message || 'Please try again.');
+    }
+  };
 
   const handleStartTracker = async () => {
     try {
@@ -146,7 +177,15 @@ export default function DirectionsScreen() {
       <View style={styles.bikeBar}>
         <TouchableOpacity
           style={styles.bikeSelector}
-          onPress={() => setShowBikePicker(true)}
+          onPress={() => {
+            if (lockedBikeId) {
+              Alert.alert('Motorcycle Locked', 'Tap Unlock below to change your motorcycle.');
+            } else if (isTrackingActive) {
+              Alert.alert('Tracking Active', 'Stop tracking before changing bikes.');
+            } else {
+              setShowBikePicker(true);
+            }
+          }}
         >
           <Text style={styles.bikeIcon}>🏍</Text>
           <View style={styles.bikeInfo}>
@@ -157,7 +196,7 @@ export default function DirectionsScreen() {
               </Text>
             )}
           </View>
-          <Text style={styles.dropdownArrow}>▼</Text>
+          <Text style={styles.dropdownArrow}>{lockedBikeId ? '🔒' : '▼'}</Text>
         </TouchableOpacity>
 
         {selectedBike && !isTrackingActive && (
@@ -166,6 +205,26 @@ export default function DirectionsScreen() {
           </TouchableOpacity>
         )}
       </View>
+
+      {selectedBike && (
+        <View style={styles.lockRow}>
+          <TouchableOpacity
+            style={[styles.lockBtn, !!lockedBikeId && styles.lockBtnActive, isTrackingActive && styles.lockBtnDisabled]}
+            disabled={isTrackingActive} onPress={toggleBikeLock}>
+            <Text style={styles.lockBtnText}>{lockedBikeId ? '🔓 Unlock Motorcycle' : '🔒 Lock This Motorcycle'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.documentsBtn}
+            onPress={() => navigation.navigate('MotorcyclesTab', {
+              screen: 'MotorcycleDetail',
+              params: { motorcycleId: selectedBike.id, initialTab: 'Insurance' },
+            })}>
+            <Text style={styles.documentsBtnText}>🛡 Documents</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+      {lockedBikeId && (
+        <Text style={styles.lockHint}>🔒 This bike stays selected on restart. Completed GPS rides will be logged to this bike automatically.</Text>
+      )}
 
       {/* Main content area */}
       <View style={styles.mainContent}>
@@ -233,12 +292,12 @@ export default function DirectionsScreen() {
           <View style={styles.infoCard}>
             <Text style={styles.infoTitle}>How it works</Text>
             <Text style={styles.infoText}>
-              1. Select your bike above{'\n'}
+              1. Select or lock your bike above{'\n'}
               2. Tap "Start Tracking"{'\n'}
               3. Ride! GPS detects speed > 10 mph{'\n'}
               4. Tracking starts after 15 seconds{'\n'}
               5. Stops automatically after 5 min idle{'\n'}
-              6. Log miles from the Home screen
+              6. Locked bike: miles auto-log. Otherwise choose your bike on Home
             </Text>
           </View>
         )}
@@ -259,7 +318,7 @@ export default function DirectionsScreen() {
                     <TouchableOpacity
                       key={bike.id}
                       style={[styles.bikeOption, isActive && styles.bikeOptionActive]}
-                      onPress={() => { setSelectedBike(bike); setShowBikePicker(false); }}
+                      onPress={() => handleSelectBike(bike)}
                     >
                       <View>
                         <Text style={[styles.bikeOptionName, isActive && styles.bikeOptionNameActive]}>
@@ -363,6 +422,15 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   logRideBtnText: { color: COLORS.white, fontSize: 13, fontWeight: '700' },
+
+  lockRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingTop: 10, backgroundColor: COLORS.bg },
+  lockBtn: { flex: 1, borderRadius: 10, paddingVertical: 12, paddingHorizontal: 8, alignItems: 'center', backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.bronze },
+  lockBtnActive: { borderColor: COLORS.green },
+  lockBtnDisabled: { opacity: 0.5 },
+  lockBtnText: { color: COLORS.text, fontSize: 13, fontWeight: '700' },
+  documentsBtn: { borderRadius: 10, padding: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.bronze },
+  documentsBtnText: { color: COLORS.white, fontSize: 13, fontWeight: '700' },
+  lockHint: { color: COLORS.green, fontSize: 12, paddingHorizontal: 18, paddingTop: 8, textAlign: 'center' },
 
   // Main content
   mainContent: {
