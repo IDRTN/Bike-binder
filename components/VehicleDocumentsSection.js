@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  View, Text, TouchableOpacity, Image, Alert, StyleSheet,
+  View, Text, TouchableOpacity, Image, Alert, StyleSheet, TextInput,
 } from 'react-native';
 import { updateMotorcycle } from '../storage';
 import {
@@ -8,6 +8,14 @@ import {
 } from '../utils/vehicleDocumentStorage';
 import ImageViewer from './ImageViewer';
 import { COLORS } from '../theme';
+import {
+  INSURANCE_REMINDER_OPTIONS,
+  parseInsuranceDate,
+  insuranceWarningText,
+  insuranceDaysRemaining,
+  scheduleInsuranceReminder,
+  cancelInsuranceReminder,
+} from '../utils/insuranceReminders';
 
 const TYPES = {
   insurance: { title: 'Insurance', field: 'insuranceDocuments', description: 'Store photos of your CURRENT insurer-issued proof of insurance.' },
@@ -19,9 +27,55 @@ export default function VehicleDocumentsSection({ motorcycle, onUpdate, type }) 
   const [side, setSide] = useState('Front');
   const [busy, setBusy] = useState(false);
   const [viewerUri, setViewerUri] = useState(null);
+  const [expiryInput, setExpiryInput] = useState(motorcycle.insuranceExpiryDate || '');
+  const [reminderDays, setReminderDays] = useState(motorcycle.insuranceReminderDays ?? 30);
+  const [savingExpiry, setSavingExpiry] = useState(false);
   if (!config) return null;
 
   const documents = motorcycle[config.field] || [];
+
+  const saveInsuranceExpiry = async () => {
+    if (savingExpiry) return;
+    const date = expiryInput.trim();
+    if (date && !parseInsuranceDate(date)) {
+      Alert.alert('Invalid Date', 'Enter a real date as YYYY-MM-DD, such as 2027-03-15.');
+      return;
+    }
+    setSavingExpiry(true);
+    let newNotificationId = null;
+    try {
+      const result = await scheduleInsuranceReminder(motorcycle, date, reminderDays);
+      newNotificationId = result.id;
+      const oldNotificationId = motorcycle.insuranceNotificationId;
+      const updated = {
+        ...motorcycle,
+        insuranceExpiryDate: date,
+        insuranceReminderDays: reminderDays,
+        insuranceNotificationId: newNotificationId,
+      };
+      await updateMotorcycle(updated);
+      onUpdate(updated);
+      if (oldNotificationId && oldNotificationId !== newNotificationId) {
+        try { await cancelInsuranceReminder(oldNotificationId); }
+        catch (error) { console.warn('Unable to cancel old insurance notification', error); }
+      }
+      const days = insuranceDaysRemaining(date);
+      let explanation;
+      if (!date) explanation = 'Expiration date cleared. Any previous phone reminder was canceled.';
+      else if (reminderDays === 0) explanation = 'Expiration date saved. Phone reminders are off; dashboard expiry warnings remain on.';
+      else if (days < 0) explanation = 'Expiration date saved as already expired. Update your digital card and date.';
+      else if (!result.permissionGranted) explanation = 'Date saved. Allow BikeBinder notifications in Android settings and save again to schedule a phone reminder. Dashboard alerts still work.';
+      else explanation = 'Expiration date saved. A phone reminder is scheduled ' + reminderDays + ' days before expiration, or soon if that date has passed.';
+      Alert.alert('Insurance Saved', explanation);
+    } catch (error) {
+      if (newNotificationId) {
+        try { await cancelInsuranceReminder(newNotificationId); } catch {}
+      }
+      Alert.alert('Unable to Save Reminder', error.message || 'Please try again.');
+    } finally {
+      setSavingExpiry(false);
+    }
+  };
 
   const addPhoto = async (source) => {
     if (busy) return;
@@ -75,6 +129,42 @@ export default function VehicleDocumentsSection({ motorcycle, onUpdate, type }) 
       <Text style={styles.hint}>{config.description}</Text>
       <Text style={styles.hint}>Saved locally on this phone for offline viewing. Documents may contain private information.</Text>
 
+      {type === 'insurance' && (
+        <View style={styles.renewalCard}>
+          <Text style={styles.renewalTitle}>Insurance expiration & renewal reminder</Text>
+          <Text style={styles.hint}>Enter the expiration date shown on your current digital insurance card.</Text>
+          <TextInput
+            style={styles.expiryInput}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor={COLORS.textSecondary}
+            autoCapitalize="none"
+            keyboardType="numbers-and-punctuation"
+            value={expiryInput}
+            onChangeText={setExpiryInput}
+          />
+          <Text style={styles.caption}>Phone notification</Text>
+          <View style={styles.reminderRow}>
+            {INSURANCE_REMINDER_OPTIONS.map((days) => (
+              <TouchableOpacity key={days}
+                style={[styles.reminderOption, reminderDays === days && styles.reminderSelected]}
+                onPress={() => setReminderDays(days)} disabled={savingExpiry}>
+                <Text style={[styles.reminderText, reminderDays === days && styles.reminderTextSelected]}>
+                  {days === 0 ? 'Off' : days + ' days'}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <TouchableOpacity style={[styles.saveExpiryButton, savingExpiry && styles.disabled]}
+            onPress={saveInsuranceExpiry} disabled={savingExpiry}>
+            <Text style={styles.saveExpiryText}>{savingExpiry ? 'Saving...' : 'Save Expiration & Reminder'}</Text>
+          </TouchableOpacity>
+          {insuranceWarningText(motorcycle.insuranceExpiryDate) && (
+            <Text style={styles.expiryWarning}>⚠ {insuranceWarningText(motorcycle.insuranceExpiryDate)}</Text>
+          )}
+          <Text style={styles.hint}>Phone notifications require Android permission; timing may vary with battery settings. The Home screen also displays insurance expiry warnings.</Text>
+        </View>
+      )}
+
       <Text style={styles.caption}>Which side are you adding?</Text>
       <View style={styles.sideRow}>
         {['Front', 'Back'].map((option) => (
@@ -119,6 +209,17 @@ export default function VehicleDocumentsSection({ motorcycle, onUpdate, type }) 
 const styles = StyleSheet.create({
   container: { marginBottom: 24 },
   heading: { color: COLORS.text, fontSize: 22, fontWeight: '800', marginBottom: 12 },
+  renewalCard: { backgroundColor: COLORS.card, borderRadius: 12, borderWidth: 1, borderColor: COLORS.cardBorder, padding: 16, marginBottom: 18 },
+  renewalTitle: { color: COLORS.text, fontSize: 17, fontWeight: '700', marginBottom: 8 },
+  expiryInput: { color: COLORS.text, borderWidth: 1, borderColor: COLORS.bronze, borderRadius: 10, padding: 12, fontSize: 17, marginBottom: 12 },
+  reminderRow: { flexDirection: 'row', gap: 6, marginBottom: 12, flexWrap: 'wrap' },
+  reminderOption: { paddingVertical: 10, paddingHorizontal: 11, borderWidth: 1, borderColor: COLORS.cardBorder, borderRadius: 8, backgroundColor: COLORS.bg },
+  reminderSelected: { borderColor: COLORS.bronze },
+  reminderText: { color: COLORS.textSecondary, fontSize: 13, fontWeight: '600' },
+  reminderTextSelected: { color: COLORS.bronzeLight },
+  saveExpiryButton: { backgroundColor: COLORS.bronze, borderRadius: 10, padding: 14, alignItems: 'center', marginBottom: 12 },
+  saveExpiryText: { color: COLORS.white, fontSize: 15, fontWeight: '700' },
+  expiryWarning: { color: COLORS.yellow, fontSize: 15, fontWeight: '700', marginBottom: 12 },
   hint: { color: COLORS.textSecondary, fontSize: 13, lineHeight: 20, marginBottom: 10 },
   caption: { color: COLORS.text, fontSize: 14, fontWeight: '600', marginTop: 6, marginBottom: 8 },
   sideRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
