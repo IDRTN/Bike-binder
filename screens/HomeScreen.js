@@ -44,6 +44,7 @@ export default function HomeScreen({ navigation }) {
   const [showRidePrompt, setShowRidePrompt] = useState(false);
   const [applyingRide, setApplyingRide] = useState(false);
   const [autoRideNotice, setAutoRideNotice] = useState('');
+  const [lockedDocumentBike, setLockedDocumentBike] = useState(null);
 
   const applyPendingRide = async (ride, selectedBike) => {
     if (applyingRide) return;
@@ -99,6 +100,7 @@ export default function HomeScreen({ navigation }) {
           const remaining = (await loadPendingRides()).filter((ride) => !ride.logged);
           if (!active) return;
           setBikes(currentBikes);
+          setLockedDocumentBike(locked || null);
           setPendingRides(remaining);
           setShowRidePrompt(remaining.length > 0);
           setAutoRideNotice(loggedCount
@@ -193,6 +195,26 @@ export default function HomeScreen({ navigation }) {
             <Text style={{ color: COLORS.green, fontWeight: '700' }}>{autoRideNotice}</Text>
           </View>
         ) : null}
+        {lockedDocumentBike && (
+          <View style={{ backgroundColor: COLORS.card, borderColor: COLORS.cardBorder, borderWidth: 1, padding: 14, borderRadius: 12, marginBottom: 16 }}>
+            <Text style={{ color: COLORS.text, fontWeight: '700', fontSize: 16 }}>Roadside Documents</Text>
+            <Text style={{ color: COLORS.textSecondary, marginTop: 4, marginBottom: 10 }}>
+              🔒 {lockedDocumentBike.make} {lockedDocumentBike.model}
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              {['Insurance', 'Registration'].map((section) => (
+                <TouchableOpacity key={section} style={{ flex: 1, backgroundColor: COLORS.bronze, padding: 12, borderRadius: 10, alignItems: 'center' }}
+                  onPress={() => navigation.navigate('MotorcyclesTab', {
+                    screen: 'MotorcycleDetail',
+                    params: { motorcycleId: lockedDocumentBike.id, initialTab: section },
+                  })}>
+                  <Text style={{ color: COLORS.white, fontSize: 14, fontWeight: '700' }}>{section}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
+
         {/* Summary Cards */}
         <View style={styles.cardsGrid}>
           {cards.map((card) => (
