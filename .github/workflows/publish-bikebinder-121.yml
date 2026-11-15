@@ -1,0 +1,59 @@
+name: Publish BikeBinder v1.2.1 APK
+
+on:
+  push:
+    branches:
+      - fix/background-ride-mileage-20261114
+    paths:
+      - '.github/workflows/publish-bikebinder-121.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    name: Attach existing APK to GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download already-built and verified v1.2.1 APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p apk
+          gh run download 43671432238 \
+            --repo IDRTN/Bike-binder \
+            --name BikeBinder-1.2.1-GPS-Update-APK \
+            --dir apk
+          test -s apk/app-debug.apk
+          mv apk/app-debug.apk apk/BikeBinder-v1.2.1.apk
+
+      - name: Publish v1.2.1 release without rebuilding or changing app identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > RELEASE_NOTES.md <<'NOTES'
+          BikeBinder v1.2.1 – GPS mileage tracking bug fix.
+
+          - Same application ID: com.bikebinder.app.
+          - Version code 4 (up from version code 3).
+          - Persistent background GPS ride tracking, restored state, pending ride logging, and whole-mile odometer updates.
+          - The attached APK is the exact successful build artifact from GitHub Actions run 43671432238; no new app or APK was generated for this release.
+
+          **Important installation caution:** this APK's signing certificate matches the publicly published BikeBinder v1.2.0 APK, but an existing installation signed with a different key cannot be updated in place. Android may report "App not installed." This was reported on one existing installation and is not yet resolved. Do not uninstall your currently installed app or clear its storage because local motorcycle records could be lost. Downloading through a browser does not bypass Android's signature or version checks.
+          NOTES
+          if gh release view v1.2.1 --repo IDRTN/Bike-binder >/dev/null 2>&1; then
+            echo "Release v1.2.1 already exists. Refusing to replace an existing release or APK."
+            exit 1
+          fi
+          gh release create v1.2.1 apk/BikeBinder-v1.2.1.apk \
+            --repo IDRTN/Bike-binder \
+            --target "${{ github.sha }}" \
+            --title "BikeBinder v1.2.1 — GPS mileage fix (test)" \
+            --notes-file RELEASE_NOTES.md \
+            --prerelease \
+            --verify-tag
