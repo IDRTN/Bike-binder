@@ -33,8 +33,12 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # GitHub's Ubuntu Android runner already provides a current Android SDK.
+      # android-actions/setup-android@v3 now fails while requesting a retired 'tools' SDK package.
+      - name: Verify preinstalled Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          test -d "$ANDROID_HOME"
 
       - name: Generate native Android project
         run: npx expo prebuild --platform android --clean --non-interactive
