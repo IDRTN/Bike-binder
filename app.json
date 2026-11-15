@@ -46,7 +46,15 @@
       "expo-image-picker",
       "expo-sharing",
       "expo-web-browser",
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow BikeBinder to use your location to track rides in the background.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ]
     ],
     "extra": {
       "eas": {
