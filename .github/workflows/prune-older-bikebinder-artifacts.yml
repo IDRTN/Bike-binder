@@ -1,0 +1,84 @@
+name: Clean up superseded BikeBinder APK artifacts
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/prune-older-bikebinder-artifacts.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  remove-superseded-apks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Delete only verified superseded BikeBinder APK artifacts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const protectedArtifacts = new Map([
+              [14151303793, 'BikeBinder-v1.2.5-GPS-FIX-INSTALL-READY'],
+              [14146185873, 'BikeBinder-Original-Update-Audit-ZIP'],
+            ]);
+            const removeArtifacts = new Map([
+              [14151406550, 'BikeBinder-v1.2.4-GPS-FIX-INSTALL-READY'],
+              [14150556214, 'BikeBinder-v1.2.3-GPS-FIX-INSTALL-READY'],
+              [14145760257, 'BikeBinder-1.2.1-GPS-Update-APK'],
+              [14144527890, 'BikeBinder-1.2.1-GPS-Update-APK'],
+              [14143432831, 'BikeBinder-GPS-test-APK'],
+            ]);
+
+            const getArtifacts = () => github.paginate(
+              github.rest.actions.listArtifactsForRepo, { owner, repo, per_page: 100 }
+            );
+            const initial = await getArtifacts();
+            for (const [id, name] of protectedArtifacts) {
+              const artifact = initial.find(a => a.id === id);
+              if (!artifact || artifact.name !== name) {
+                throw new Error('Protected artifact is missing or has unexpected name: ' + id);
+              }
+              core.info('Preserving: ' + artifact.name + ' (' + id + ')');
+            }
+
+            let deletedBytes = 0;
+            let deletedCount = 0;
+            for (const artifact of initial) {
+              if (!removeArtifacts.has(artifact.id)) continue;
+              if (artifact.name !== removeArtifacts.get(artifact.id)) {
+                throw new Error('Artifact name changed unexpectedly: ' + artifact.id);
+              }
+              core.info('Deleting obsolete artifact: ' + artifact.name +
+                ' (' + artifact.id + ', ' + artifact.size_in_bytes + ' bytes)');
+              await github.rest.actions.deleteArtifact({
+                owner, repo, artifact_id: artifact.id,
+              });
+              deletedBytes += artifact.size_in_bytes;
+              deletedCount++;
+            }
+
+            const remaining = await getArtifacts();
+            for (const [id, name] of protectedArtifacts) {
+              if (!remaining.some(a => a.id === id && a.name === name)) {
+                throw new Error('Protected artifact disappeared after cleanup: ' + id);
+              }
+            }
+            for (const id of removeArtifacts.keys()) {
+              if (remaining.some(a => a.id === id)) {
+                throw new Error('Superseded artifact remains unexpectedly: ' + id);
+              }
+            }
+
+            core.info('Deleted ' + deletedCount + ' old APK artifacts; freed ' +
+              (deletedBytes / 1e6).toFixed(1) + ' MB of retained artifact bytes');
+            core.info('Retained latest install-ready v1.2.5 APK and original update audit ZIP.');
+            await core.summary
+              .addHeading('BikeBinder Actions artifact cleanup')
+              .addRaw('Removed ' + deletedCount + ' old APK artifacts (' +
+                (deletedBytes / 1e6).toFixed(1) +
+                ' MB retained bytes).<br/>Protected latest v1.2.5 APK and original audit ZIP.<br/>This does not erase already-billed usage in the current cycle.')
+              .write();
