@@ -8,6 +8,7 @@ import {
   Modal,
   Pressable,
   Alert,
+  AppState,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -73,7 +74,10 @@ export default function HomeScreen({ navigation }) {
   useFocusEffect(
     useCallback(() => {
       let active = true;
-      (async () => {
+      let refreshing = false;
+      const refresh = async () => {
+        if (refreshing) return;
+        refreshing = true;
         try {
           let currentBikes = await loadMotorcycles();
           const pref = await loadRideBikePreference();
@@ -120,9 +124,17 @@ export default function HomeScreen({ navigation }) {
             setPendingRides(remaining);
             setShowRidePrompt(remaining.length > 0);
           }
+        } finally {
+          refreshing = false;
         }
-      })();
-      return () => { active = false; };
+      };
+      refresh();
+      // On Android, returning to an already-focused Home screen does not
+      // necessarily fire a navigation focus event. Check saved rides on resume.
+      const subscription = AppState.addEventListener('change', (state) => {
+        if (state === 'active' && active) refresh();
+      });
+      return () => { active = false; subscription.remove(); };
     }, [])
   );
 
