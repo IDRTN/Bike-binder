@@ -20,14 +20,15 @@ import MaintenanceSection from '../components/MaintenanceSection';
 import SlideMenu from '../components/SlideMenu';
 import { COLORS } from '../theme';
 import PhotosSection from '../components/PhotosSection';
+import VehicleDocumentsSection from '../components/VehicleDocumentsSection';
 
-const TABS = ['Info', 'Photos', 'Parts', 'Manuals', 'Services', 'Maintenance'];
+const TABS = ['Info', 'Insurance', 'Registration', 'Photos', 'Parts', 'Manuals', 'Services', 'Maintenance'];
 
 export default function MotorcycleDetailScreen({ route, navigation }) {
   const { motorcycleId } = route.params;
   const insets = useSafeAreaInsets();
   const [motorcycle, setMotorcycle] = useState(null);
-  const [activeTab, setActiveTab] = useState('Info');
+  const [activeTab, setActiveTab] = useState(route.params?.initialTab || 'Info');
   const [menuVisible, setMenuVisible] = useState(false);
 
   const [editing, setEditing] = useState(false);
@@ -57,6 +58,7 @@ export default function MotorcycleDetailScreen({ route, navigation }) {
 
   useFocusEffect(
     useCallback(() => {
+      if (TABS.includes(route.params?.initialTab)) setActiveTab(route.params.initialTab);
       (async () => {
         const bikes = await loadMotorcycles();
         const bike = bikes.find((b) => b.id === motorcycleId);
@@ -73,7 +75,7 @@ export default function MotorcycleDetailScreen({ route, navigation }) {
           setNewMileage(bike.mileageCurrent || bike.mileageBought || '');
         }
       })();
-    }, [motorcycleId])
+    }, [motorcycleId, route.params?.initialTab])
   );
 
   if (!motorcycle) return <View style={styles.loading}><Text>Loading...</Text></View>;
@@ -161,6 +163,18 @@ export default function MotorcycleDetailScreen({ route, navigation }) {
             <TouchableOpacity style={styles.deleteBtn} onPress={handleDelete}><Text style={styles.deleteBtnText}>Delete</Text></TouchableOpacity>
           </View>
         </View>
+        <View style={styles.documentShortcutCard}>
+          <Text style={styles.mileageTitle}>Roadside Documents</Text>
+          <Text style={styles.documentShortcutHint}>Open stored photos quickly, even when you're offline.</Text>
+          <View style={styles.actionRow}>
+            <TouchableOpacity style={styles.documentShortcutBtn} onPress={() => setActiveTab('Insurance')}>
+              <Text style={styles.documentShortcutText}>🛡 Insurance</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.documentShortcutBtn} onPress={() => setActiveTab('Registration')}>
+              <Text style={styles.documentShortcutText}>📄 Registration</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
         <View style={styles.mileageCard}>
           <Text style={styles.mileageTitle}>Mileage</Text>
           <View style={styles.mileageRow}>
@@ -209,6 +223,8 @@ export default function MotorcycleDetailScreen({ route, navigation }) {
       />
       <ScrollView style={styles.content} contentContainerStyle={[styles.contentInner, { paddingBottom: insets.bottom + 24 }]}>
         {activeTab === 'Info' && renderInfo()}
+        {activeTab === 'Insurance' && <VehicleDocumentsSection motorcycle={motorcycle} onUpdate={setMotorcycle} type="insurance" />}
+        {activeTab === 'Registration' && <VehicleDocumentsSection motorcycle={motorcycle} onUpdate={setMotorcycle} type="registration" />}
         {activeTab === 'Photos' && <PhotosSection motorcycle={motorcycle} onUpdate={setMotorcycle} />}
         {activeTab === 'Parts' && <PartsSection motorcycle={motorcycle} onUpdate={setMotorcycle} />}
         {activeTab === 'Manuals' && <ManualsSection motorcycle={motorcycle} onUpdate={setMotorcycle} />}
@@ -241,6 +257,10 @@ const styles = StyleSheet.create({
   editBtnText: { color: '#fff', fontSize: 15, fontWeight: '600' },
   deleteBtn: { flex: 1, borderWidth: 1, borderColor: COLORS.red, borderRadius: 10, padding: 14, alignItems: 'center' },
   deleteBtnText: { color: COLORS.red, fontSize: 15, fontWeight: '600' },
+  documentShortcutCard: { backgroundColor: COLORS.card, borderRadius: 14, padding: 18, borderWidth: 1, borderColor: COLORS.cardBorder, marginBottom: 16 },
+  documentShortcutHint: { color: COLORS.textSecondary, fontSize: 12, marginBottom: 12 },
+  documentShortcutBtn: { flex: 1, padding: 14, backgroundColor: COLORS.headerBg, borderWidth: 1, borderColor: COLORS.bronze, borderRadius: 10, alignItems: 'center' },
+  documentShortcutText: { color: COLORS.bronzeLight, fontWeight: '700', fontSize: 14 },
   mileageCard: { backgroundColor: COLORS.card, borderRadius: 14, padding: 20, borderWidth: 1, borderColor: COLORS.cardBorder },
   mileageTitle: { fontSize: 16, fontWeight: '700', color: COLORS.text, marginBottom: 16 },
   mileageRow: { flexDirection: 'row', justifyContent: 'space-between' },

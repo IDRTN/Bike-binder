@@ -94,8 +94,8 @@ jobs:
           PKG="$("$AAPT" dump badging "$APK" | grep "^package:")"
           echo "$PKG"
           echo "$PKG" | grep -F "name='com.bikebinder.app'"
-          echo "$PKG" | grep -F "versionCode='6'"
-          echo "$PKG" | grep -F "versionName='1.2.3'"
+          echo "$PKG" | grep -F "versionCode='7'"
+          echo "$PKG" | grep -F "versionName='1.2.4'"
           echo 'Verified: standalone JavaScript bundle embedded'
           sha256sum "$APK"
 
@@ -130,22 +130,22 @@ jobs:
           SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n1)"
           test -x "$ZIPALIGN" && test -x "$SIGNER"
           "$ZIPALIGN" -f -p 4 android/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/bikebinder-sign/aligned.apk"
-          "$SIGNER" sign --ks "$KEYSTORE" --ks-key-alias "$KEY_ALIAS" --ks-pass env:STORE_PASSWORD --key-pass env:KEY_PASSWORD --out dist/BikeBinder-v1.2.3-GPS-STANDALONE.apk "$RUNNER_TEMP/bikebinder-sign/aligned.apk"
-          "$SIGNER" verify --verbose --print-certs dist/BikeBinder-v1.2.3-GPS-STANDALONE.apk
-          CERT="$("$SIGNER" verify --print-certs dist/BikeBinder-v1.2.3-GPS-STANDALONE.apk | grep -m1 'certificate SHA-256 digest:' | awk '{print $NF}' | tr '[:upper:]' '[:lower:]' | tr -d ':')"
+          "$SIGNER" sign --ks "$KEYSTORE" --ks-key-alias "$KEY_ALIAS" --ks-pass env:STORE_PASSWORD --key-pass env:KEY_PASSWORD --out dist/BikeBinder-v1.2.4-GPS-STANDALONE.apk "$RUNNER_TEMP/bikebinder-sign/aligned.apk"
+          "$SIGNER" verify --verbose --print-certs dist/BikeBinder-v1.2.4-GPS-STANDALONE.apk
+          CERT="$("$SIGNER" verify --print-certs dist/BikeBinder-v1.2.4-GPS-STANDALONE.apk | grep -m1 'certificate SHA-256 digest:' | awk '{print $NF}' | tr '[:upper:]' '[:lower:]' | tr -d ':')"
           test "$CERT" = "dd8c279ec28b342520ae868c7fe0d3fd4731e49f0fb2ebc4bb21dddbeec47fbd"
-          if ! unzip -Z1 dist/BikeBinder-v1.2.3-GPS-STANDALONE.apk | grep -Fxq 'assets/index.android.bundle'; then
+          if ! unzip -Z1 dist/BikeBinder-v1.2.4-GPS-STANDALONE.apk | grep -Fxq 'assets/index.android.bundle'; then
             echo "::error::Signed APK missing bundled JavaScript"
             exit 1
           fi
-          "$ZIPALIGN" -c -p 4 dist/BikeBinder-v1.2.3-GPS-STANDALONE.apk
-          sha256sum dist/BikeBinder-v1.2.3-GPS-STANDALONE.apk
+          "$ZIPALIGN" -c -p 4 dist/BikeBinder-v1.2.4-GPS-STANDALONE.apk
+          sha256sum dist/BikeBinder-v1.2.4-GPS-STANDALONE.apk
           rm -rf "$RUNNER_TEMP/bikebinder-sign"
 
       - name: Upload INSTALL-READY signed APK to GitHub Actions Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: BikeBinder-v1.2.3-GPS-FIX-INSTALL-READY
-          path: dist/BikeBinder-v1.2.3-GPS-STANDALONE.apk
+          name: BikeBinder-v1.2.4-GPS-FIX-INSTALL-READY
+          path: dist/BikeBinder-v1.2.4-GPS-STANDALONE.apk
           if-no-files-found: error
           retention-days: 90

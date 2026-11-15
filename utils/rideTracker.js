@@ -1,6 +1,7 @@
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { loadRideBikePreference } from '../storage';
 
 const PENDING_RIDE_KEY = '@bikebinder_pending_ride';
 const TRACKER_STATE_KEY = '@bikebinder_tracker_state';
@@ -339,7 +340,12 @@ async function finishTracking(reason = 'manual') {
 
   // Save before clearing the checkpoint; an idempotent ride ID prevents a
   // double entry if Android terminates the JS process in between the writes.
-  if (hadRide) await savePendingRide(totalMiles, rideId);
+  if (hadRide) {
+    // Snapshot the currently locked motorcycle with the ride. Unlocked or
+    // older rides remain manual so changing bikes can't misassign history.
+    const preference = await loadRideBikePreference();
+    await savePendingRide(totalMiles, rideId, preference.lockedBikeId);
+  }
 
   state.status = 'idle';
   state.lastLocation = null;
@@ -380,7 +386,7 @@ export function getGpsLog() {
 
 // ─── Pending rides ──────────────────────────────────────────────
 
-export async function savePendingRide(miles, rideId = Date.now().toString()) {
+export async function savePendingRide(miles, rideId = Date.now().toString(), lockedBikeId = null) {
   const existing = await loadPendingRides();
   if (existing.some((ride) => ride.id === rideId)) return;
   existing.push({
@@ -388,6 +394,7 @@ export async function savePendingRide(miles, rideId = Date.now().toString()) {
     miles: parseFloat(miles.toFixed(1)),
     date: new Date().toISOString(),
     logged: false,
+    lockedBikeId: lockedBikeId || null,
   });
   await AsyncStorage.setItem(PENDING_RIDE_KEY, JSON.stringify(existing));
 }

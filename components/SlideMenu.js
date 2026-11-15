@@ -8,6 +8,7 @@ import {
   StyleSheet,
   Modal,
   Pressable,
+  ScrollView,
 } from 'react-native';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -72,6 +73,7 @@ export default function SlideMenu({ visible, items, activeItem, onSelect, onClos
             </TouchableOpacity>
           </View>
 
+          <ScrollView style={styles.itemsScroll} contentContainerStyle={styles.itemsContent} showsVerticalScrollIndicator>
           {items.map((item) => {
             const isActive = item === activeItem;
             return (
@@ -83,6 +85,8 @@ export default function SlideMenu({ visible, items, activeItem, onSelect, onClos
                 <View style={styles.iconCircle}>
                   <Text style={styles.iconLetter}>
                     {item === 'Info' ? 'I' :
+                     item === 'Insurance' ? '🛡' :
+                     item === 'Registration' ? 'R' :
                      item === 'Photos' ? 'P' :
                      item === 'Parts' ? 'C' :
                      item === 'Manuals' ? 'M' :
@@ -97,6 +101,7 @@ export default function SlideMenu({ visible, items, activeItem, onSelect, onClos
               </TouchableOpacity>
             );
           })}
+          </ScrollView>
         </Animated.View>
       </View>
     </Modal>
@@ -126,6 +131,8 @@ const styles = StyleSheet.create({
     shadowRadius: 15,
     elevation: 30,
   },
+  itemsScroll: { flex: 1 },
+  itemsContent: { paddingBottom: 28 },
   drawerHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',

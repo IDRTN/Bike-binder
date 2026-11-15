@@ -8,10 +8,11 @@ import {
   Modal,
   Pressable,
   Alert,
+  AppState,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { loadMotorcycles, updateMotorcycle } from '../storage';
+import { loadMotorcycles, loadRideBikePreference, applyRideMilesToBike } from '../storage';
 import { COLORS } from '../theme';
 import { loadPendingRides, clearPendingRide } from '../utils/rideTracker';
 import { checkForUpdate, promptUpdate } from '../utils/updateChecker';
@@ -43,6 +44,8 @@ export default function HomeScreen({ navigation }) {
   const [pendingRides, setPendingRides] = useState([]);
   const [showRidePrompt, setShowRidePrompt] = useState(false);
   const [applyingRide, setApplyingRide] = useState(false);
+  const [autoRideNotice, setAutoRideNotice] = useState('');
+  const [lockedDocumentBike, setLockedDocumentBike] = useState(null);
 
   const applyPendingRide = async (ride, selectedBike) => {
     if (applyingRide) return;
@@ -54,19 +57,13 @@ export default function HomeScreen({ navigation }) {
 
     setApplyingRide(true);
     try {
-      // Reload current odometer to avoid applying to an outdated screen copy.
-      const latestBikes = await loadMotorcycles();
-      const bike = latestBikes.find((b) => b.id === selectedBike.id);
-      if (!bike) throw new Error('This motorcycle is no longer in the garage.');
-      const current = parseInt(bike.mileageCurrent || bike.mileageBought || '0', 10);
-      const updated = { ...bike, mileageCurrent: (current + miles).toString() };
-      await updateMotorcycle(updated);
+      const updated = await applyRideMilesToBike(ride, selectedBike.id);
       await clearPendingRide(ride.id);
-      setBikes(latestBikes.map((b) => b.id === bike.id ? updated : b));
+      setBikes(await loadMotorcycles());
       const remaining = (await loadPendingRides()).filter((r) => !r.logged);
       setPendingRides(remaining);
       setShowRidePrompt(remaining.length > 0);
-      Alert.alert('Ride Logged', `Added ${miles} miles to ${bike.make} ${bike.model}.`);
+      Alert.alert('Ride Logged', `Added ${miles} miles to ${updated.make} ${updated.model}.`);
     } catch (error) {
       Alert.alert('Unable to Log Ride', error.message || 'The ride was kept pending.');
     } finally {
@@ -76,18 +73,68 @@ export default function HomeScreen({ navigation }) {
 
   useFocusEffect(
     useCallback(() => {
-      (async () => {
-        setBikes(await loadMotorcycles());
-        const rides = await loadPendingRides();
-        const unlogged = rides.filter(r => !r.logged);
-        setPendingRides(unlogged);
-        setShowRidePrompt(unlogged.length > 0);
-        // Check for app updates
-        const update = await checkForUpdate();
-        if (update) {
-          promptUpdate(update);
+      let active = true;
+      let refreshing = false;
+      const refresh = async () => {
+        if (refreshing) return;
+        refreshing = true;
+        try {
+          let currentBikes = await loadMotorcycles();
+          const pref = await loadRideBikePreference();
+          const locked = currentBikes.find((bike) => bike.id === pref.lockedBikeId);
+          const rides = (await loadPendingRides()).filter((ride) => !ride.logged);
+          let loggedCount = 0;
+          let loggedMiles = 0;
+          if (locked) {
+            // Only rides completed with this exact bike locked are auto-assigned.
+            for (const ride of rides) {
+              if (ride.lockedBikeId !== locked.id) continue;
+              try {
+                await applyRideMilesToBike(ride, locked.id);
+                await clearPendingRide(ride.id);
+                loggedCount += 1;
+                loggedMiles += Math.round(Number(ride.miles));
+              } catch (error) {
+                console.error('Could not auto-log locked motorcycle ride:', error);
+                // Keep the ride pending so it can be recovered manually.
+              }
+            }
+            currentBikes = await loadMotorcycles();
+          }
+          const remaining = (await loadPendingRides()).filter((ride) => !ride.logged);
+          if (!active) return;
+          setBikes(currentBikes);
+          setLockedDocumentBike(locked || null);
+          setPendingRides(remaining);
+          setShowRidePrompt(remaining.length > 0);
+          setAutoRideNotice(loggedCount
+            ? '✓ Auto-logged ' + loggedMiles + ' mi to ' + locked.make + ' ' + locked.model
+            : '');
+          try {
+            const update = await checkForUpdate();
+            if (active && update) promptUpdate(update);
+          } catch (error) {
+            console.warn('Update check failed:', error);
+          }
+        } catch (error) {
+          console.error('Failed to load BikeBinder dashboard:', error);
+          if (active) {
+            setBikes(await loadMotorcycles());
+            const remaining = (await loadPendingRides()).filter((ride) => !ride.logged);
+            setPendingRides(remaining);
+            setShowRidePrompt(remaining.length > 0);
+          }
+        } finally {
+          refreshing = false;
         }
-      })();
+      };
+      refresh();
+      // On Android, returning to an already-focused Home screen does not
+      // necessarily fire a navigation focus event. Check saved rides on resume.
+      const subscription = AppState.addEventListener('change', (state) => {
+        if (state === 'active' && active) refresh();
+      });
+      return () => { active = false; subscription.remove(); };
     }, [])
   );
 
@@ -155,6 +202,31 @@ export default function HomeScreen({ navigation }) {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
+        {autoRideNotice ? (
+          <View style={{ backgroundColor: COLORS.card, borderColor: COLORS.green, borderWidth: 1, borderRadius: 10, marginBottom: 14, padding: 12 }}>
+            <Text style={{ color: COLORS.green, fontWeight: '700' }}>{autoRideNotice}</Text>
+          </View>
+        ) : null}
+        {lockedDocumentBike && (
+          <View style={{ backgroundColor: COLORS.card, borderColor: COLORS.cardBorder, borderWidth: 1, padding: 14, borderRadius: 12, marginBottom: 16 }}>
+            <Text style={{ color: COLORS.text, fontWeight: '700', fontSize: 16 }}>Roadside Documents</Text>
+            <Text style={{ color: COLORS.textSecondary, marginTop: 4, marginBottom: 10 }}>
+              🔒 {lockedDocumentBike.make} {lockedDocumentBike.model}
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              {['Insurance', 'Registration'].map((section) => (
+                <TouchableOpacity key={section} style={{ flex: 1, backgroundColor: COLORS.bronze, padding: 12, borderRadius: 10, alignItems: 'center' }}
+                  onPress={() => navigation.navigate('MotorcyclesTab', {
+                    screen: 'MotorcycleDetail',
+                    params: { motorcycleId: lockedDocumentBike.id, initialTab: section },
+                  })}>
+                  <Text style={{ color: COLORS.white, fontSize: 14, fontWeight: '700' }}>{section}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
+
         {/* Summary Cards */}
         <View style={styles.cardsGrid}>
           {cards.map((card) => (
@@ -210,7 +282,7 @@ export default function HomeScreen({ navigation }) {
         )}
       </ScrollView>
 
-      {/* Rides are kept pending until the user chooses which bike to update. */}
+      {/* Unlocked and unmatched rides remain pending for manual assignment. */}
       <Modal
         transparent
         visible={showRidePrompt && pendingRides.length > 0}
