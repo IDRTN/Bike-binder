@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { removeVehicleDocumentPhoto } from './utils/vehicleDocumentStorage';
+import { cancelInsuranceReminder } from './utils/insuranceReminders';
 
 const STORAGE_KEY = '@bikebinder_motorcycles';
 const RIDE_BIKE_KEY = '@bikebinder_ride_bike_preference';
@@ -92,6 +93,10 @@ export async function deleteMotorcycle(id) {
       selectedBikeId: pref.selectedBikeId === id ? null : pref.selectedBikeId,
       lockedBikeId: pref.lockedBikeId === id ? null : pref.lockedBikeId,
     });
+  }
+  if (removed?.insuranceNotificationId) {
+    try { await cancelInsuranceReminder(removed.insuranceNotificationId); }
+    catch (error) { console.warn('Could not cancel insurance renewal reminder:', error); }
   }
   // Delete only copies managed by the private documents folder, not gallery originals.
   for (const document of [...(removed?.insuranceDocuments || []), ...(removed?.registrationDocuments || [])]) {
