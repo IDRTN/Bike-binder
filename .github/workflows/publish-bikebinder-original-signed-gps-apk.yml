@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Download existing published v1.2.2 APK
+      - name: Download verified v1.2.2 audit APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -53,4 +53,3 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload v1.2.2 /tmp/bikebinder/BikeBinder-v1.2.2-GPS-FIX-ORIGINAL-SIGNATURE.apk --repo "$GITHUB_REPOSITORY" --clobber
-          gh release edit v1.2.2 --repo "$GITHUB_REPOSITORY" --latest
